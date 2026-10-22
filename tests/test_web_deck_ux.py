@@ -1009,6 +1009,91 @@ def test_events_reducer_surfaces_standby_writeup_in_coordinator_thread():
     _run_ui_node(script)
 
 
+def test_events_reducer_tracks_writeup_for_results_page():
+    helper = UI_ROOT / "lib" / "events.ts"
+    script = textwrap.dedent(
+        f"""
+        const fs = require("fs");
+        const ts = require("typescript");
+        const vm = require("vm");
+        const source = fs.readFileSync({json.dumps(str(helper))}, "utf8");
+        const out = ts.transpileModule(source, {{
+          compilerOptions: {{ module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }}
+        }}).outputText;
+        const sandbox = {{ module: {{ exports: {{}} }}, exports: {{}} }};
+        sandbox.exports = sandbox.module.exports;
+        vm.runInNewContext(out, sandbox, {{ filename: "events.js" }});
+        const lib = sandbox.module.exports;
+        function assert(cond, msg) {{ if (!cond) throw new Error(msg); }}
+
+        let s = lib.emptyDeck("run-results");
+        s = lib.reduce(s, {{ event_type: lib.EventType.RUN_STARTED, run_id: "run-results", ts: 1,
+          payload: {{ challenge: {{ name: "results", category: "pwn" }} }} }});
+        s = lib.reduce(s, {{ event_type: lib.EventType.FOLLOWUP_STARTED, run_id: "run-results", ts: 2,
+          payload: {{ kind: "writeup", followup_id: "F-1" }} }});
+        assert(s.writeupPending === true, "writeup pending starts");
+        assert(s.writeupText === "", "old report is kept while the new one is pending");
+
+        s = lib.reduce(s, {{ event_type: lib.EventType.FOLLOWUP_COMPLETED, run_id: "run-results", ts: 3,
+          solver_id: "cli-kimi-standby",
+          payload: {{ kind: "writeup", followup_id: "F-1", text: "# 复盘\\nflag{{x}}",
+                      artifact_path: "sessions/run-results/writeup.md" }} }});
+        assert(s.writeupPending === false, "writeup pending clears");
+        assert(s.writeupText.includes("# 复盘"), "writeup text is stored for the results page");
+        assert(s.writeupArtifactPath.endsWith("writeup.md"), "artifact path is retained");
+        assert(s.chat.some((m) => m.content.includes("# 复盘")), "writeup still lands in the thread");
+
+        s = lib.reduce(s, {{ event_type: lib.EventType.FOLLOWUP_STARTED, run_id: "run-results", ts: 4,
+          payload: {{ kind: "writeup", followup_id: "F-2" }} }});
+        assert(s.writeupPending === true, "regeneration starts");
+        s = lib.reduce(s, {{ event_type: lib.EventType.FOLLOWUP_FAILED, run_id: "run-results", ts: 5,
+          payload: {{ kind: "writeup", followup_id: "F-2", detail: "worker failed" }} }});
+        assert(s.writeupPending === false, "failed writeup clears pending");
+        assert(s.writeupError === "worker failed", "failure detail is stored");
+        assert(s.writeupText.includes("# 复盘"), "previous report survives a failed regeneration");
+        """
+    )
+    _run_ui_node(script)
+
+
+def test_code_highlighter_preserves_source_and_marks_tokens():
+    helper = UI_ROOT / "lib" / "highlight.ts"
+    script = textwrap.dedent(
+        f"""
+        const fs = require("fs");
+        const ts = require("typescript");
+        const vm = require("vm");
+        const source = fs.readFileSync({json.dumps(str(helper))}, "utf8");
+        const out = ts.transpileModule(source, {{
+          compilerOptions: {{ module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }}
+        }}).outputText;
+        const sandbox = {{ module: {{ exports: {{}} }}, exports: {{}} }};
+        sandbox.exports = sandbox.module.exports;
+        vm.runInNewContext(out, sandbox, {{ filename: "highlight.js" }});
+        const lib = sandbox.module.exports;
+        function assert(cond, msg) {{ if (!cond) throw new Error(msg); }}
+
+        const code = "# comment\\nfrom pwn import *\\nflag = \\"flag{{x}}\\"\\nprint(flag)\\n";
+        const tokens = lib.highlightCode(code, "python");
+        assert(tokens.map((t) => t.text).join("") === code, "source preserved");
+        assert(tokens.some((t) => t.type === "comment"), "python comment");
+        assert(tokens.some((t) => t.type === "keyword" && t.text === "from"), "python keyword");
+        assert(tokens.some((t) => t.type === "string" && t.text.includes("flag{{x}}")), "python string");
+        assert(tokens.some((t) => t.type === "builtin" && t.text === "print"), "python builtin");
+
+        const call = lib.highlightCode("remote('x', 1)", "python");
+        assert(call.some((t) => t.type === "function" && t.text === "remote"), "python function call");
+
+        const sh = "#!/bin/bash\\nURL=$1 # target\\n";
+        const shTokens = lib.highlightCode(sh, "bash");
+        assert(shTokens.map((t) => t.text).join("") === sh, "bash source preserved");
+        assert(shTokens.some((t) => t.type === "comment"), "bash comment");
+        assert(shTokens.some((t) => t.type === "variable" && t.text === "$1"), "bash variable");
+        """
+    )
+    _run_ui_node(script)
+
+
 def test_events_reducer_labels_resolve_reopen_separately_from_false_positive():
     helper = UI_ROOT / "lib" / "events.ts"
     script = textwrap.dedent(

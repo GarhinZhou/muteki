@@ -1306,6 +1306,7 @@ function Deck() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [btwOpen, setBtwOpen] = useState(false);
   const [artifactOpen, setArtifactOpen] = useState(false);
+  const [resultsOpen, setResultsOpen] = useState(false);
   // Default runtime view is the activity stream (live event ledger); the last
   // picked view is remembered per browser so a reopen restores the operator's
   // working context instead of forcing the fact graph.
@@ -1512,13 +1513,17 @@ function Deck() {
   // native window listener), so gate on !paletteOpen too — otherwise one Esc
   // would close both the palette and the panel beneath it.
   useEffect(() => {
-    if (!artifactOpen || showSettings || paletteOpen || btwOpen) return;
+    if ((!artifactOpen && !resultsOpen) || showSettings || paletteOpen || btwOpen) return;
     const onEsc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); setArtifactOpen(false); }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setArtifactOpen(false);
+        setResultsOpen(false);
+      }
     };
     window.addEventListener("keydown", onEsc);
     return () => window.removeEventListener("keydown", onEsc);
-  }, [artifactOpen, showSettings, paletteOpen, btwOpen]);
+  }, [artifactOpen, resultsOpen, showSettings, paletteOpen, btwOpen]);
 
   // Single-key shortcuts to jump the secondary panels from the keyboard, so a
   // power operator watching a run never has to reach for the mouse. Mnemonic map:
@@ -1701,7 +1706,10 @@ function Deck() {
     // attachments: absolute paths the backend saved; the worker stages them into
     // its cwd. Filtered server-side to existing paths, so a stale one is harmless.
     try {
-      await start({ kind: "swarm", prompt, offline, challenge, worker_backend, ...runOverrides }, id);
+      await start({
+        kind: "swarm", prompt, offline, challenge, worker_backend,
+        auto_writeup: true, ...runOverrides,
+      }, id);
       setAttachments([]); // chips consumed by this dispatch
       setListBump((n) => n + 1);
     } catch (err) {
@@ -1717,6 +1725,7 @@ function Deck() {
     // Purely local: reset to a fresh empty draft. No backend run is created until
     // the operator dispatches, so "+ New solve" can't litter the rail with stubs.
     setArtifactOpen(false);
+    setResultsOpen(false);
     setSelected(null);
     setAttachments([]);
     setRunId(newDraftId());
@@ -1725,6 +1734,7 @@ function Deck() {
   const onSelectRun = (id: string) => {
     if (id === runId) return;
     setArtifactOpen(false);
+    setResultsOpen(false);
     setSelected(null);
     setAttachments([]);
     setRunId(id);
@@ -1799,8 +1809,19 @@ function Deck() {
   };
 
   const openArtifact = (view: ArtifactView) => {
+    setResultsOpen(false);
     setArtifactView(view);
     setArtifactOpen(true);
+  };
+
+  const showConversation = () => {
+    setArtifactOpen(false);
+    setResultsOpen(false);
+  };
+
+  const showResults = () => {
+    setArtifactOpen(false);
+    setResultsOpen(true);
   };
 
   // Roster mini-row click → open the Worker 详情 panel focused on that worker.
@@ -1870,9 +1891,11 @@ function Deck() {
           onAddFiles={addFiles}
           onRemoveFile={removeFile}
           artifactOpen={artifactOpen}
+          resultsOpen={resultsOpen}
           artifactView={artifactView}
           onOpenArtifact={openArtifact}
-          onShowConversation={() => setArtifactOpen(false)}
+          onShowConversation={showConversation}
+          onShowResults={showResults}
           runtimePanel={(
             <RuntimeArtifactPanel
               open={artifactOpen}
@@ -1898,11 +1921,13 @@ function Deck() {
               focusSpeaker={focusedSpeaker}
               onOpenSpeakerTimeline={onOpenSpeakerTimeline}
               onOpenFact={(seq) => {
+                setResultsOpen(false);
                 setArtifactOpen(true);
                 setArtifactView("evidence");
                 setFocusedFact({ seq, nonce: Date.now() });
               }}
               onOpenPoc={(id) => {
+                setResultsOpen(false);
                 setArtifactOpen(true);
                 setArtifactView("pocs");
                 setFocusedPoc({ id, nonce: Date.now() });

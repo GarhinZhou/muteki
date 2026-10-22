@@ -695,6 +695,12 @@ export interface DeckState {
   finished: boolean;
   /** Ask/Writeup lifecycle is independent from the completed run lifecycle. */
   followupPending: boolean;
+  /** Raw Markdown of the latest completed post-solve writeup. */
+  writeupText: string;
+  writeupAt?: number;
+  writeupPending: boolean;
+  writeupError?: string;
+  writeupArtifactPath?: string;
   // wall-clock bookends (event ts, seconds or ms — normalised at read time).
   // startedAt = first RUN_STARTED; finishedAt = RUN_FINISHED. A running run has
   // startedAt but no finishedAt → elapsed is measured against "now".
@@ -807,6 +813,8 @@ export function emptyDeck(runId: string): DeckState {
     preparing: false,
     finished: false,
     followupPending: false,
+    writeupText: "",
+    writeupPending: false,
     solved: false,
     flags: [],
     invalidatedFlags: [],
@@ -1171,7 +1179,17 @@ export function reduce(prev: DeckState, ev: MutekiEvent): DeckState {
       // actually races, race_started will set it again; a resolve generation never
       // races, and a hard-stopped race may never have emitted race_concluded.
       s.racing = false;
-      if (firstStart) { s.startedAt = ev.ts; s.finishedAt = undefined; }
+      if (firstStart) {
+        s.startedAt = ev.ts;
+        s.finishedAt = undefined;
+        // A fresh conversation starts without a report; replay of this run's
+        // writeup events (if any) fills it back in below.
+        s.writeupText = "";
+        s.writeupAt = undefined;
+        s.writeupPending = false;
+        s.writeupError = undefined;
+        s.writeupArtifactPath = undefined;
+      }
       s.challengeName = p.challenge?.name ?? s.challengeName;
       if (typeof p.name_autogen === "boolean") s.challengeNameAutogen = p.name_autogen;
       s.category = p.challenge?.category ?? s.category;
@@ -2721,6 +2739,10 @@ export function reduce(prev: DeckState, ev: MutekiEvent): DeckState {
         break;
       }
       s.followupPending = true;
+      if (kind === "writeup") {
+        s.writeupPending = true;
+        s.writeupError = undefined;
+      }
       const question = String(p.question || "").trim();
       if (kind === "ask" && question) {
         pushChat(s, {
@@ -2753,6 +2775,15 @@ export function reduce(prev: DeckState, ev: MutekiEvent): DeckState {
           : message);
       }
       const text = String(p.text || "").trim();
+      if (kind === "writeup") {
+        s.writeupPending = false;
+        s.writeupError = undefined;
+        if (text) {
+          s.writeupText = text;
+          s.writeupAt = ev.ts;
+          s.writeupArtifactPath = String(p.artifact_path || "") || undefined;
+        }
+      }
       if (text) {
         pushChat(s, {
           role: "agent", solverId: sid || "standby", mainThread: true,
@@ -2765,6 +2796,10 @@ export function reduce(prev: DeckState, ev: MutekiEvent): DeckState {
       s.followupPending = false;
       const followupId = String(p.followup_id || "");
       const kind = String(p.kind || "ask");
+      if (kind === "writeup") {
+        s.writeupPending = false;
+        s.writeupError = String(p.detail || "原因未查明");
+      }
       const pendingStatus = kind === "writeup" ? "正在生成报告…" : "正在回答追问…";
       const failedStatus = `后续操作失败：${String(p.detail || "原因未查明")}`;
       const pendingIndex = [...s.chat].reverse().findIndex(

@@ -444,6 +444,26 @@ export async function openWorkspace(runId: string): Promise<boolean> {
   }
 }
 
+/** Solve EXP scripts preserved under the run's final/exp/ directory. */
+export interface RunExpFile {
+  name: string;
+  source?: string;
+  language: string;
+  size: number;
+  content: string;
+}
+
+export async function getRunExp(runId: string): Promise<RunExpFile[]> {
+  try {
+    const r = await apiFetch(`/api/runs/${runId}/exp`);
+    if (!r.ok) return [];
+    const data = await r.json().catch(() => ({}));
+    return Array.isArray(data?.files) ? data.files : [];
+  } catch {
+    return [];
+  }
+}
+
 // ── engine status ────────────────────────────────────────────────────────────
 
 /** Per-dispatched-worker availability + health. */

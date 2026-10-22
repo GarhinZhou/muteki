@@ -17,6 +17,7 @@ import { SelectionGlider } from "@/components/SelectionGlider";
 import { RunInspector } from "@/components/RunInspector";
 import { CopyText } from "@/components/CopyText";
 import { Markdown } from "@/components/Markdown";
+import { ResultsPanel } from "@/components/ResultsPanel";
 import { NumberField } from "@/components/NumberField";
 import { reportToMarkdown } from "@/lib/reportMarkdown";
 import { useCopied } from "@/lib/useCopied";
@@ -1445,9 +1446,11 @@ export function Conversation({
   onAddFiles,
   onRemoveFile,
   artifactOpen,
+  resultsOpen,
   artifactView,
   onOpenArtifact,
   onShowConversation,
+  onShowResults,
   runtimePanel,
   onToggleRail,
   theme,
@@ -1474,9 +1477,11 @@ export function Conversation({
   onAddFiles: (files: FileList | File[]) => void;
   onRemoveFile: (path: string) => void;
   artifactOpen: boolean;
+  resultsOpen: boolean;
   artifactView: ArtifactView;
   onOpenArtifact: (view: ArtifactView) => void;
   onShowConversation: () => void;
+  onShowResults: () => void;
   runtimePanel: ReactNode;
   onToggleRail: () => void;
   theme: "light" | "dark";
@@ -1615,7 +1620,7 @@ export function Conversation({
 
   return (
     <div
-      className={`convo ${deck.started && !artifactOpen ? "has-inspector" : ""} ${artifactOpen ? "runtime-peer-open" : ""} ${inspectorResizing ? "inspector-resizing" : ""}`}
+      className={`convo ${deck.started && !artifactOpen && !resultsOpen ? "has-inspector" : ""} ${artifactOpen ? "runtime-peer-open" : ""} ${resultsOpen ? "results-open" : ""} ${inspectorResizing ? "inspector-resizing" : ""}`}
       style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}
     >
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true" aria-label={t("a11y.status")}>{liveStatus}</div>
@@ -1633,14 +1638,19 @@ export function Conversation({
         )}
         {deck.started && (
           <div className="convo-view-switch selection-glide-host" role="tablist" aria-label={t("convo.viewSwitcher")}>
-            <SelectionGlider selectedKey={artifactOpen ? "runtime" : "conversation"} selector='button[aria-selected="true"]' className="compact" duration={240} />
-            <button type="button" role="tab" aria-selected={!artifactOpen} className={!artifactOpen ? "on" : ""} onClick={onShowConversation}>
+            <SelectionGlider selectedKey={resultsOpen ? "results" : artifactOpen ? "runtime" : "conversation"} selector='button[aria-selected="true"]' className="compact" duration={240} />
+            <button type="button" role="tab" aria-selected={!artifactOpen && !resultsOpen} className={!artifactOpen && !resultsOpen ? "on" : ""} onClick={onShowConversation}>
               <Icon name="rows" size={13} />
               <span>{t("convo.viewConversation")}</span>
             </button>
-            <button type="button" role="tab" aria-selected={artifactOpen} className={artifactOpen ? "on" : ""} onClick={() => onOpenArtifact(artifactView)}>
+            <button type="button" role="tab" aria-selected={artifactOpen && !resultsOpen} className={artifactOpen && !resultsOpen ? "on" : ""} onClick={() => onOpenArtifact(artifactView)}>
               <Icon name="panel" size={13} />
               <span>{t("convo.viewRuntime")}</span>
+            </button>
+            <button type="button" role="tab" aria-selected={resultsOpen} className={resultsOpen ? "on" : ""} onClick={onShowResults}>
+              <Icon name="flag" size={13} />
+              <span>{t("convo.viewResults")}</span>
+              {deck.writeupPending ? <i className="view-dot" aria-hidden="true" /> : null}
             </button>
           </div>
         )}
@@ -1762,7 +1772,7 @@ export function Conversation({
           />
         </div>
 
-        {deck.started && !artifactOpen && (
+        {deck.started && !artifactOpen && !resultsOpen && (
           <div className="inspector-shell conversation-inspector-shell">
             <div
               className="inspector-resizer"
@@ -1803,6 +1813,15 @@ export function Conversation({
         <div className="convo-runtime-peer">
           {runtimePanel}
         </div>
+
+        {resultsOpen && (
+          <ResultsPanel
+            deck={deck}
+            running={running}
+            onGenerate={onWriteup}
+            onShowConversation={onShowConversation}
+          />
+        )}
       </div>
     </div>
   );

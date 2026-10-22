@@ -1185,6 +1185,13 @@ def _swarm_driver(body: dict[str, Any], mgr: RunManager | None = None) -> Driver
                         )
 
     drive.protocol_version = declared_protocol  # type: ignore[attr-defined]
+    # Post-solve report automation is opt-in at the API boundary (the deck sends
+    # auto_writeup=true); the env var force-enables it for non-UI callers.
+    _auto_env = os.environ.get("MUTEKI_AUTO_WRITEUP", "").strip().lower()
+    drive.auto_writeup = bool(  # type: ignore[attr-defined]
+        body.get("auto_writeup", False)
+        or _auto_env in {"1", "true", "yes", "on"}
+    )
     return drive
 
 
@@ -1920,6 +1927,14 @@ def build_standby_driver(cmd: dict[str, Any], mgr: "RunManager | None" = None) -
                         "backend": backend,
                     }
                     mgr.persist_winner_continuation(run.run_id, persisted)
+                    try:
+                        from muteki.solver.deliverables import (
+                            preserve_winner_deliverables,
+                        )
+                        if out.workdir:
+                            preserve_winner_deliverables(root, out.workdir)
+                    except Exception:
+                        pass
                     (root / "winner.json").write_text(json.dumps({
                         key: persisted[key]
                         for key in (

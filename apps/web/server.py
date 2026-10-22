@@ -450,6 +450,39 @@ def create_app(manager: Optional[RunManager] = None) -> FastAPI:
             if graph is not None:
                 graph.close()
 
+    @app.get("/api/runs/{run_id}/exp")
+    async def run_exp(run_id: str) -> Any:
+        """Return the solve EXP scripts preserved for this run (bounded)."""
+        from muteki.solver.deliverables import (
+            discover_deliverables,
+            load_preserved_deliverables,
+        )
+
+        mgr: RunManager = app.state.manager
+        run = mgr.get(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="unknown run")
+        if not mgr.is_protocol1_run(run_id, run=run):
+            return {"files": []}
+        workspace = mgr.workspace_dir(run_id)
+        files = load_preserved_deliverables(workspace, max_bytes=128_000)
+        if files:
+            return {"files": files}
+        # Older runs may have no manifest but still retain the winner cwd.
+        winner = mgr.load_winner_continuation(run_id)
+        workdir = ""
+        rel = str(winner.get("workdir_rel") or "").strip()
+        if rel:
+            candidate = (workspace / rel).resolve()
+            try:
+                candidate.relative_to(workspace.resolve())
+                if candidate.is_dir():
+                    workdir = str(candidate)
+            except (OSError, ValueError):
+                workdir = ""
+        return {"files": discover_deliverables(
+            workspace, workdir=workdir or None, max_bytes=128_000)}
+
     # ── BTW side-query worker (separate one-shot process, no swarm slot) ──────
     # Independent route (not /hitl), no run.hitl queue, no InsightBus GUIDANCE,
     # no bus.emit, no CostController, no CliSolver, no scheduler/max_worker slot.

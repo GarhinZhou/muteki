@@ -191,6 +191,12 @@ class Run:
     # Ask/Writeup run after RUN_FINISHED but still publish durable, typed output.
     # IDs stay active until their terminal follow-up event has been emitted.
     active_followups: set[str] = field(default_factory=set)
+    # Post-solve report automation: request at most one writeup per solved
+    # execution generation. The task waits for the generation wrapper to close
+    # its bus, then starts the normal serialized standby path.
+    auto_writeup_enabled: bool = False
+    auto_writeup_generations: set[int] = field(default_factory=set)
+    auto_writeup_task: Optional[asyncio.Task] = None
     termination_reasons: dict[int, str] = field(default_factory=dict)
     # One task owns one readiness result for each exact participating profile
     # configuration.  A continuation generation reuses the result; changing the
@@ -1085,7 +1091,8 @@ class RunManager:
             LOG.error(
                 "refusing to delete %s: standby runtime exit is unconfirmed", run_id)
             return False
-        pending = [t for t in (run.task, run.standby_task, run.title_task)
+        pending = [t for t in (
+            run.task, run.standby_task, run.title_task, run.auto_writeup_task)
                    if t is not None and not t.done()]
         for t in pending:
             t.cancel()
@@ -1638,6 +1645,9 @@ class RunManager:
             run.title_task.cancel()
         run.execution_generation = generation
         run.finished = False
+        # The driver opts in (the real swarm driver does; mock/demo drivers do
+        # not) so tests and synthetic runs never spawn a post-solve worker.
+        run.auto_writeup_enabled = bool(getattr(driver, "auto_writeup", False))
 
         async def _go() -> None:
             failure_detail = ""
@@ -1717,6 +1727,8 @@ class RunManager:
                                 title_task, return_exceptions=True)
                         run.finished = True
                         await run.bus.close()
+                        if run.solved and run.flags:
+                            self._schedule_auto_writeup(run, generation)
 
         coroutine = _go()
         try:
@@ -3131,6 +3143,9 @@ class RunManager:
                   "expected_flags": run.expected_flags,
                   "multi_flag": run.multi_flag}
         merged = {"challenge": ch, **(body or {})}
+        # Continue-solving keeps the original dispatch's automation preference
+        # unless the resolve request explicitly overrides it.
+        merged.setdefault("auto_writeup", run.auto_writeup_enabled)
         if body and body.get("challenge"):
             merged["challenge"] = {**ch, **body["challenge"]}
         # "继续做题" 跳过 race-scout 竞速层：竞速是"从空图并行单发初探"，只在冷启动有意义。
@@ -3201,6 +3216,120 @@ class RunManager:
         self._bump_bus_seq(new_bus, max(getattr(run.bus, "_seq", 0), durable_seq))
         run.bus = new_bus
         run.cost.bus = new_bus  # cost updates emit onto the live bus too
+
+    def _schedule_auto_writeup(self, run: "Run", generation: int) -> None:
+        """Generate the post-solve report once per solved execution generation.
+
+        The generation wrapper calls this only after it has closed the run's bus,
+        so the standby path can publish on a fresh bus. A manual writeup already
+        requested for this generation suppresses the automatic one.
+        """
+        if not run.auto_writeup_enabled:
+            return
+        if not run.solved or not run.flags:
+            return
+        if generation <= 0 or generation != run.execution_generation:
+            return
+        if generation in run.auto_writeup_generations:
+            return
+        if not self.is_protocol1_run(run.run_id, run=run):
+            return
+        if os.environ.get("MUTEKI_AUTO_WRITEUP", "1").strip().lower() in {
+            "0", "false", "no", "off",
+        }:
+            return
+        run.auto_writeup_generations.add(generation)
+        task = run.auto_writeup_task
+        if task is not None and not task.done():
+            return
+        run.auto_writeup_task = asyncio.create_task(
+            self._auto_writeup(run, generation),
+            name=f"auto-writeup-{run.run_id}-g{generation}",
+        )
+
+    async def _auto_writeup(self, run: "Run", generation: int) -> None:
+        try:
+            # The wrapper schedules this task from its own finally block. Wait for
+            # it to return (and close the bus) before starting the standby worker.
+            owner = run.task
+            if owner is not None and not owner.done():
+                try:
+                    await asyncio.shield(owner)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    return
+            if (
+                self._shutting_down
+                or run.run_id in self._closing_runs
+                or generation != run.execution_generation
+                or not run.solved
+                or not run.flags
+            ):
+                return
+            if await self._writeup_already_requested(run, generation):
+                return
+            # Standbys are serialized. If an Ask is still running, wait for the
+            # slot; a manual writeup will be detected by the replay check below.
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 600.0
+            while self._standby_busy(run):
+                if (
+                    self._shutting_down
+                    or run.run_id in self._closing_runs
+                    or generation != run.execution_generation
+                    or loop.time() >= deadline
+                ):
+                    return
+                await asyncio.sleep(0.5)
+            if await self._writeup_already_requested(run, generation):
+                return
+            if (
+                self._shutting_down
+                or run.run_id in self._closing_runs
+                or generation != run.execution_generation
+            ):
+                return
+            self._ensure_standby(run.run_id, {
+                "action": "writeup",
+                "target": "global",
+                "followup_id": f"auto-writeup-{run.run_id}-g{generation}",
+            })
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Automation must never fail a solved run or surface worker details.
+            LOG.error("automatic writeup failed for %s", run.run_id)
+
+    async def _writeup_already_requested(
+        self, run: "Run", generation: int,
+    ) -> bool:
+        """True when a writeup follow-up was already started/finished this generation.
+
+        Manual and automatic requests share this ledger, so a click racing the
+        automatic trigger cannot produce two reports.
+        """
+        try:
+            async for ev in run.store.replay(run.run_id):
+                if ev.event_type not in {
+                    EventType.FOLLOWUP_STARTED,
+                    EventType.FOLLOWUP_COMPLETED,
+                    EventType.FOLLOWUP_FAILED,
+                }:
+                    continue
+                payload = ev.payload or {}
+                if str(payload.get("kind") or "") != "writeup":
+                    continue
+                try:
+                    event_generation = int(
+                        payload.get("execution_generation") or 0)
+                except (TypeError, ValueError):
+                    event_generation = 0
+                if event_generation == generation:
+                    return True
+        except Exception:
+            return False
+        return False
 
     def _ensure_standby(self, run_id: str, cmd: dict[str, Any]) -> bool:
         """Spin up a standby worker to serve `cmd`, unless one is already running
@@ -3448,7 +3577,10 @@ class RunManager:
                 # A second raw cancel+gather can hang forever when the wrapper
                 # suppresses CancelledError and would discard the retained owner.
                 continue
-            for t in (run.task, run.standby_task, run.title_task):
+            for t in (
+                run.task, run.standby_task, run.title_task,
+                run.auto_writeup_task,
+            ):
                 if t is not None and not t.done():
                     t.cancel()
                     pending[t] = run.run_id

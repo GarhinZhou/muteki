@@ -166,6 +166,34 @@ async def test_credentials_endpoint_reads_shared_graph(tmp_path) -> None:
     assert creds[0]["value"] == "hunter2"
 
 
+async def test_exp_endpoint_returns_preserved_winner_scripts(tmp_path) -> None:
+    from muteki.solver.deliverables import preserve_winner_deliverables
+
+    mgr = RunManager(sessions_root=tmp_path / "sessions")
+    run = mgr.create("exp-run")
+    workspace = mgr.workspace_dir(run.run_id)
+    workdir = workspace / "workers" / "cli-py-1"
+    (workdir / "scratch").mkdir(parents=True)
+    (workdir / "scratch" / "exp.py").write_text(
+        "from pwn import *\nremote('target', 1337)\n", encoding="utf-8")
+    preserve_winner_deliverables(workspace, workdir)
+    app = create_app(mgr)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        timeout=10,
+        trust_env=False,
+    ) as client:
+        resp = await client.get("/api/runs/exp-run/exp")
+
+    assert resp.status_code == 200
+    files = resp.json()["files"]
+    assert files[0]["name"] == "exp.py"
+    assert files[0]["language"] == "python"
+    assert "pwn" in files[0]["content"]
+
+
 async def test_btw_endpoint_streams_one_shot_worker_without_swarm_slot(
     tmp_path, monkeypatch
 ) -> None:

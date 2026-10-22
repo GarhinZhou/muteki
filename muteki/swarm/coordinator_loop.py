@@ -2788,6 +2788,18 @@ class _CoordinatorLoopMixin:
             import json
             workdir = getattr(outcome, "workdir", "") or ""
             self._winner_workdir_name = Path(workdir).name if workdir else ""
+            # The results page must show the real exploit script even after the
+            # Worker scratch tree is swept. Persist a bounded copy now; a failure
+            # here must never prevent winner persistence.
+            if workdir and self._graph_dir is not None:
+                try:
+                    from muteki.solver.deliverables import (
+                        preserve_winner_deliverables,
+                    )
+                    preserve_winner_deliverables(
+                        self._graph_dir.parent, workdir)
+                except Exception:
+                    pass
             trusted_payload = {
                 "engine": getattr(outcome, "engine", "") or "",
                 "worker_id": str(worker_id or ""),

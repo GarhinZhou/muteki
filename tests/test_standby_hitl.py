@@ -86,7 +86,9 @@ def test_persist_winner_without_session_keeps_continuation_context(tmp_path):
                sandbox=SandboxManager(root=tmp_path / "sbx"),
                graph_dir=graph_dir, run_id="run-x")
     workdir = tmp_path / "workers" / "cli-kimi-1"
-    workdir.mkdir(parents=True)
+    (workdir / "scratch").mkdir(parents=True)
+    (workdir / "scratch" / "exp.py").write_text(
+        "from pwn import *\nremote('target', 1)\n", encoding="utf-8")
     trusted: dict = {}
     sw._winner_continuation_writer = trusted.update
 
@@ -107,6 +109,122 @@ def test_persist_winner_without_session_keeps_continuation_context(tmp_path):
     assert trusted["session"] == ""
     assert trusted["workdir"] == str(workdir)
     assert trusted["worker_id"] == "cli-kimi-1"
+    # The actual EXP source is preserved beside graph/ before scratch cleanup.
+    preserved = graph_dir.parent / "final" / "exp" / "exp.py"
+    assert preserved.exists()
+    assert "remote('target', 1)" in preserved.read_text(encoding="utf-8")
+
+
+def test_auto_writeup_runs_once_for_solved_generation(tmp_path, monkeypatch):
+    """The solved run generates one report automatically, exactly once."""
+    from apps.web.run_manager import RunManager
+
+    monkeypatch.delenv("MUTEKI_AUTO_WRITEUP", raising=False)
+    mgr = RunManager(sessions_root=tmp_path / "sessions")
+    run = mgr.create("run-auto")
+    run.solved = True
+    run.flags = ["flag{x}"]
+    run.execution_generation = 1
+    run.auto_writeup_enabled = True
+    calls: list[tuple[str, dict]] = []
+
+    monkeypatch.setattr(
+        mgr, "_ensure_standby",
+        lambda run_id, cmd: calls.append((run_id, cmd)) or True,
+    )
+
+    async def _no_existing(_run, _generation):
+        return False
+
+    monkeypatch.setattr(mgr, "_writeup_already_requested", _no_existing)
+
+    async def _case() -> None:
+        mgr._schedule_auto_writeup(run, 1)
+        assert run.auto_writeup_task is not None
+        await run.auto_writeup_task
+        # A second schedule for the same generation is a no-op.
+        mgr._schedule_auto_writeup(run, 1)
+        await run.auto_writeup_task
+
+    asyncio.run(_case())
+
+    assert len(calls) == 1
+    run_id, cmd = calls[0]
+    assert run_id == "run-auto"
+    assert cmd["action"] == "writeup"
+    assert cmd["followup_id"].startswith("auto-writeup-run-auto-g1")
+
+
+def test_launch_generation_auto_schedules_writeup_after_solved(
+    tmp_path, monkeypatch,
+):
+    """The solved generation wrapper schedules the report without operator input."""
+    from apps.web.run_manager import RunManager
+    from muteki.core.events import Event, EventType
+
+    monkeypatch.delenv("MUTEKI_AUTO_WRITEUP", raising=False)
+    mgr = RunManager(sessions_root=tmp_path / "sessions")
+    run = mgr.create("run-auto-launch")
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        mgr, "_ensure_standby",
+        lambda run_id, cmd: calls.append(cmd) or True,
+    )
+
+    async def driver(target) -> None:
+        await target.bus.emit(Event(
+            event_type=EventType.RUN_FINISHED,
+            run_id=target.run_id,
+            payload={"solved": True, "flags": ["flag{x}"], "expected_flags": 1},
+        ))
+
+    driver.auto_writeup = True  # type: ignore[attr-defined]
+
+    async def _case() -> None:
+        task = mgr._launch_generation(run, driver)
+        await task
+        auto = run.auto_writeup_task
+        assert auto is not None
+        await auto
+
+    asyncio.run(_case())
+    assert len(calls) == 1
+    assert calls[0]["action"] == "writeup"
+    assert calls[0]["followup_id"].startswith("auto-writeup-run-auto-launch-g1")
+
+
+def test_auto_writeup_skips_without_flags_or_existing_report(tmp_path, monkeypatch):
+    from apps.web.run_manager import RunManager
+
+    monkeypatch.delenv("MUTEKI_AUTO_WRITEUP", raising=False)
+    mgr = RunManager(sessions_root=tmp_path / "sessions")
+    run = mgr.create("run-auto-skip")
+    run.solved = True
+    run.flags = []
+    run.execution_generation = 1
+    run.auto_writeup_enabled = True
+    calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        mgr, "_ensure_standby",
+        lambda run_id, cmd: calls.append((run_id, cmd)) or True,
+    )
+
+    async def _case() -> None:
+        mgr._schedule_auto_writeup(run, 1)
+        assert run.auto_writeup_task is None
+        run.flags = ["flag{x}"]
+        monkeypatch.setattr(
+            mgr, "_writeup_already_requested",
+            lambda _run, _generation: _true(),
+        )
+        mgr._schedule_auto_writeup(run, 1)
+        await run.auto_writeup_task
+
+    async def _true() -> bool:
+        return True
+
+    asyncio.run(_case())
+    assert calls == []
 
 
 def test_private_winner_continuation_keeps_minimal_trusted_state(tmp_path):
