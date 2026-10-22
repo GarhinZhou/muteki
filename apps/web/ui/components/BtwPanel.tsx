@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/Icon";
+import { Markdown } from "@/components/Markdown";
 import { useT } from "@/lib/i18n";
 import { apiFetch } from "@/lib/useRun";
 
@@ -219,7 +220,9 @@ export function BtwPanel({ open, onClose, runId }: BtwPanelProps) {
             <div key={i} className={`btw-msg btw-${turn.role}`}>
               <div className="btw-msg-role">{turn.role === "user" ? "你" : "观察员"}</div>
               <div className="btw-msg-body">
-                {turn.content || (turn.role === "assistant" && streaming ? "…" : "")}
+                {turn.role === "assistant"
+                  ? <Markdown text={turn.content || (streaming ? "…" : "")} />
+                  : (turn.content || "")}
               </div>
             </div>
           ))}

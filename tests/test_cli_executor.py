@@ -5290,6 +5290,7 @@ def test_standby_redirect_endpoint_crosses_the_actual_prompt_boundary(tmp_path):
 
 def test_standby_writeup_forbids_new_investigation_and_uses_short_timeout(tmp_path):
     from muteki.solver.cli_driver import CliResult
+    from muteki.swarm.shared_graph import SQLiteSharedGraph
 
     captured = {}
 
@@ -5302,10 +5303,15 @@ def test_standby_writeup_forbids_new_investigation_and_uses_short_timeout(tmp_pa
         id="writeup-standby", name="writeup", category="web",
         flag_format=r"flag\{.*?\}",
     )
+    graph = SQLiteSharedGraph.open(db_path=tmp_path / "g.db", challenge=ch)
+    graph.add_evidence(
+        actor="cli-kimi", source="run",
+        fact="Pre-XOR payload restores the shellcode after fold", verified=True)
+    graph.flag_found(actor="cli-kimi", flag="flag{standby}")
     solver = CliSolver(
         None, ch, bus=_CaptureBus(), driver=_CaptureResumeDriver(""),
         engine="claude", kb=False, mode="respond", resume_session="sess",
-        workdir=str(tmp_path), timeout=2400,
+        workdir=str(tmp_path), timeout=2400, shared_graph=graph,
         hitl_cmd={"action": "writeup", "followup_id": "F-writeup"},
     )
 
@@ -5316,8 +5322,61 @@ def test_standby_writeup_forbids_new_investigation_and_uses_short_timeout(tmp_pa
     solver._run_streaming = _finished
     outcome = asyncio.run(solver._run_respond())
 
-    assert "Do not run commands" in captured["prompt"]
-    assert "search the filesystem" in captured["prompt"]
+    prompt = captured["prompt"]
+    assert "Do not run new commands" in prompt
+    assert "start another investigation" in prompt
+    # The confirmed snapshot must be INLINE: the writeup prompt forbids tools and
+    # the winner may have no resumable session.
+    assert "## Confirmed run evidence" in prompt
+    assert "flag{standby}" in prompt
+    assert "Pre-XOR payload restores the shellcode" in prompt
+    assert captured["timeout"] == 300
+    assert outcome.reply.startswith("## 漏洞点")
+
+
+def test_standby_writeup_without_session_inlines_verified_evidence(tmp_path):
+    """PaperShell regression: Kimi has no resume handle, and the board file alone
+    was not enough because the writeup prompt forbids tool use."""
+    from muteki.solver.cli_driver import CliResult
+    from muteki.swarm.shared_graph import SQLiteSharedGraph
+
+    captured = {}
+
+    class _CaptureExecuteDriver(_StubDriver):
+        def build_execute(self, prompt, *args, **kwargs):
+            captured["prompt"] = prompt
+            return ["true"]
+
+    ch = Challenge(
+        id="writeup-no-session", name="PaperShell", category="pwn",
+        flag_format=r"flag\{.*?\}", target="nc1.example:12084",
+    )
+    graph = SQLiteSharedGraph.open(db_path=tmp_path / "g.db", challenge=ch)
+    graph.add_evidence(
+        actor="cli-kimi-3", source="run",
+        fact="ret2shellcode execve('/bin/sh') confirmed on the remote target",
+        verified=True)
+    graph.flag_found(actor="cli-kimi-3", flag="flag{paper}")
+    solver = CliSolver(
+        None, ch, bus=_CaptureBus(), driver=_CaptureExecuteDriver(""),
+        engine="kimi", kb=False, mode="respond", workdir=str(tmp_path),
+        shared_graph=graph,
+        hitl_cmd={"action": "writeup", "followup_id": "F-writeup"},
+    )
+
+    async def _finished(_argv, *, cwd, timeout, stdin_text=None):
+        captured["timeout"] = timeout
+        return CliResult(text="## 漏洞点\n已确认。", session=None)
+
+    solver._run_streaming = _finished
+    outcome = asyncio.run(solver._run_respond())
+
+    prompt = captured["prompt"]
+    assert "## Confirmed run evidence" in prompt
+    assert "flag{paper}" in prompt
+    assert "ret2shellcode execve" in prompt
+    # No dangling pointer to a file the worker is forbidden to read.
+    assert "READ IT FIRST" not in prompt
     assert captured["timeout"] == 300
     assert outcome.reply.startswith("## 漏洞点")
 

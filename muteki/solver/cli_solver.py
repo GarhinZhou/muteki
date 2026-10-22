@@ -783,21 +783,21 @@ _RESPOND_MARK_FALSE_PROMPT = (
 
 _RESPOND_WRITEUP_PROMPT = (
     "Write a concise CTF WRITEUP for the challenge you just solved, in Chinese. "
-    "Base it ONLY on what you actually confirmed this session — do not invent steps. "
-    "Do not run commands, call tools, search the filesystem, or continue the "
-    "investigation. Synthesize the report from the confirmed session history now. "
+    "Base it ONLY on the confirmed evidence included in this prompt — do not invent steps. "
+    "Do not run new commands, contact the target, or start another investigation. "
+    "Synthesize the report from the evidence snapshot now. "
     "Structure it as:\n"
     "  ## 漏洞点  (the root cause / vulnerability)\n"
-    "  ## 利用步骤  (numbered, reproducible — the real commands/requests you used)\n"
+    "  ## 利用步骤  (numbered, reproducible — the real commands/requests used)\n"
     "  ## Flag  (the flag and where it came from)\n"
     "Keep it tight and technical. Output ONLY the markdown writeup, nothing else."
 )
 
 _RESPOND_PENTEST_WRITEUP_PROMPT = (
     "Write a concise penetration-testing report in Chinese for the engagement you "
-    "just completed. Base it ONLY on evidence confirmed this session. "
-    "Do not run commands, call tools, search the filesystem, or continue the "
-    "investigation. Synthesize the report from the confirmed session history now. "
+    "just completed. Base it ONLY on the confirmed evidence included in this prompt. "
+    "Do not run new commands, contact targets, or start another investigation. "
+    "Synthesize the report from the evidence snapshot now. "
     "Structure it as:\n  ## 范围与目标\n  ## 已确认发现\n  ## 复现步骤\n  ## 影响与修复建议\n"
     "Do not invent findings, commands, requests, or impact. Output ONLY markdown."
 )
@@ -3930,6 +3930,66 @@ class CliSolver:
         wrote_file=True, set per-turn by the loop through self._board_file_written."""
         return self._board_pointer(bool(getattr(self, "_board_file_written", False)))
 
+    def _writeup_evidence_block(self) -> str:
+        """Self-contained evidence snapshot for post-solve Ask/writeup.
+
+        A standby worker may have no resumable session (engines such as Kimi never
+        expose one), and the writeup prompt forbids new investigation. The board
+        FILE is therefore not a reliable channel: sending only its pointer + the
+        attempted-intent digest made the worker conclude the run had no evidence
+        and refuse to write. Inline the graph's verified facts and flags here.
+        """
+        flags = self._known_flags()
+        facts: list[str] = []
+        sg = getattr(self, "shared_graph", None)
+        if sg is not None:
+            try:
+                for ev in sg.snapshot().evidence:
+                    if not getattr(ev, "verified", False):
+                        continue
+                    text = str(getattr(ev, "fact", "") or "").strip()
+                    if not text:
+                        continue
+                    source = str(getattr(ev, "source_solver", "") or "").strip()
+                    artifact = str(getattr(ev, "artifact_id", "") or "").strip()
+                    line = f"- ({source}) {text}" if source else f"- {text}"
+                    if artifact:
+                        line += f" [artifact:{artifact}]"
+                    facts.append(line)
+            except Exception:
+                facts = []
+        if not facts:
+            try:
+                facts = [
+                    f"- {str(e.fact).strip()}"
+                    for e in self.graph.evidence
+                    if getattr(e, "verified", False) and str(e.fact).strip()
+                ]
+            except Exception:
+                facts = []
+        if not flags and not facts:
+            return ""
+
+        facts = list(dict.fromkeys(facts))
+        sections: list[str] = []
+        if flags:
+            sections.append(
+                "## Confirmed flag(s)\n"
+                + "\n".join(f"- {flag}" for flag in flags))
+        if facts:
+            sections.append("## Verified facts\n" + "\n".join(facts[:32]))
+        body = "\n\n".join(sections)
+        if len(body) > 24000:
+            body = body[:24000] + "\n- [evidence truncated]"
+        return (
+            "\n## Confirmed run evidence (authoritative)\n"
+            "Use ONLY this snapshot. Cancelled or steered worker intents are not "
+            "evidence: a worker may be cancelled AFTER the flag was accepted. "
+            "Do not mention them as failures and do not invent commands, outputs, "
+            "findings, or flags.\n\n"
+            + body
+        )
+
     def _intent_neighborhood_context(self) -> str:
         sg = getattr(self, "shared_graph", None)
         intent_id = getattr(self, "intent_id_assigned", "") or getattr(self, "_intent_id", "") or ""
@@ -6644,6 +6704,7 @@ class CliSolver:
         self._write_board_file(wd)  # sets _board_file_written for _board_context below
 
         # build the prompt for this command
+        writeup_evidence = ""
         if action == "mark_false":
             note = self._board_context() or ""
             prompt = _RESPOND_MARK_FALSE_PROMPT.format(
@@ -6654,6 +6715,14 @@ class CliSolver:
                 if str(getattr(self.challenge, "mode", "ctf")) == "pentest"
                 else _RESPOND_WRITEUP_PROMPT
             )
+            # The writeup prompt forbids new investigation, and the winner may
+            # have no resumable session. Inline the confirmed evidence so the
+            # report does not depend on the worker reading the board file.
+            writeup_evidence = self._writeup_evidence_block()
+            if not writeup_evidence:
+                writeup_evidence = self._board_context()
+            if writeup_evidence:
+                prompt = prompt + "\n" + writeup_evidence
         else:  # ask / hint / redirect / anything conversational
             question = text or "(no question text)"
             if action == "redirect":
@@ -6679,20 +6748,22 @@ class CliSolver:
         # so resuming the winner's session here doesn't reintroduce the bloat the
         # migration removed; it just gives the answer the winner's full memory.
         stdin_text: "Optional[str]" = None
+        needs_board = not (action == "writeup" and writeup_evidence)
         if self._control_secret_values:
             # The winner session may contain durable history and Cursor cannot make
             # it ephemeral.  A secret-bearing response is always a fresh stdin-only
             # turn with an explicit board snapshot instead of a resume.
-            board = self._board_context()
-            if board:
-                prompt = prompt + "\n" + board
+            if needs_board:
+                board = self._board_context()
+                if board:
+                    prompt = prompt + "\n" + board
             argv, stdin_text = self._execute_invocation(prompt, None)
         elif self.resume_session:
             await self._note_cli_session(self.resume_session)
             argv, stdin_text = self._resume_invocation(
                 prompt, self.resume_session)
         else:
-            if action != "mark_false":
+            if action != "mark_false" and needs_board:
                 # no session to resume → seed the conversational prompt with the
                 # board so the worker still has the solve context.
                 board = self._board_context()

@@ -2778,10 +2778,12 @@ class _CoordinatorLoopMixin:
         / test runs without graph_dir simply skip persistence (no standby there)."""
         if self._graph_dir is None or outcome is None:
             return
-        session = getattr(outcome, "session", None)
-        # only CLI workers carry a session; without one there's nothing to resume.
-        if not session:
-            return
+        # A session is only a resume handle. The winner's identity, scratch
+        # directory, flags and challenge are still the authoritative context for
+        # post-solve Ask/writeup, so persist them even when the engine (for example
+        # Kimi) does not expose a resumable session id. Dropping the whole record
+        # here is what left archived runs with no winner context at all.
+        session = str(getattr(outcome, "session", "") or "")
         try:
             import json
             workdir = getattr(outcome, "workdir", "") or ""

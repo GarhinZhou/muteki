@@ -16,6 +16,7 @@ import { Icon, type IconName } from "@/components/Icon";
 import { SelectionGlider } from "@/components/SelectionGlider";
 import { RunInspector } from "@/components/RunInspector";
 import { CopyText } from "@/components/CopyText";
+import { Markdown } from "@/components/Markdown";
 import { NumberField } from "@/components/NumberField";
 import { reportToMarkdown } from "@/lib/reportMarkdown";
 import { useCopied } from "@/lib/useCopied";
@@ -174,6 +175,9 @@ function CoordBubble({
 }) {
   const [copied, copy] = useCopied();
   const text = m.i18nKey ? t(m.i18nKey, m.i18nVars) : m.content;
+  // Agent prose — notably the post-solve writeup ("复盘") — is Markdown. System
+  // lifecycle lines and operator text stay verbatim/plain.
+  const markdown = m.role === "agent" && (m.kind === "text" || m.kind === "reasoning");
   const standbyReply = m.role === "agent" && m.solverId?.endsWith("-standby");
   const who = m.role === "human" ? t("coord.you") : m.role === "system"
     ? (m.kind === "insight" ? "insight" : "system")
@@ -212,10 +216,14 @@ function CoordBubble({
       {isLong ? (
         <details className="coord-fold">
           <summary>{text.slice(0, 240).trimEnd()}…</summary>
-          <div className="body">{text}</div>
+          <div className="body">
+            {markdown ? <Markdown text={text} /> : text}
+          </div>
         </details>
       ) : (
-        <div className="body">{text}</div>
+        <div className="body">
+          {markdown ? <Markdown text={text} /> : text}
+        </div>
       )}
     </div>
   );

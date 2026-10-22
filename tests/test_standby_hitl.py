@@ -72,7 +72,12 @@ def test_persist_winner_carries_all_flags(tmp_path):
     assert winner["flag"] == "flag{a}"  # first, back-compat
 
 
-def test_persist_winner_skips_without_session(tmp_path):
+def test_persist_winner_without_session_keeps_continuation_context(tmp_path):
+    """A missing resume handle must not erase the winner's identity/workdir.
+
+    The PaperShell regression: Kimi exposes no session id, the old guard returned
+    early, and post-solve writeup started from an empty context.
+    """
     from muteki.swarm.swarm import Swarm
     from muteki.sandbox.manager import SandboxManager
 
@@ -80,10 +85,28 @@ def test_persist_winner_skips_without_session(tmp_path):
     sw = Swarm(_challenge(), [], llm=None,
                sandbox=SandboxManager(root=tmp_path / "sbx"),
                graph_dir=graph_dir, run_id="run-x")
-    # no session → nothing to resume → no file
-    sw._persist_winner(SolveOutcome(True, "f{x}", 1, None, "", session=None),
-                       "f{x}")
-    assert not (graph_dir.parent / "winner.json").exists()
+    workdir = tmp_path / "workers" / "cli-kimi-1"
+    workdir.mkdir(parents=True)
+    trusted: dict = {}
+    sw._winner_continuation_writer = trusted.update
+
+    sw._persist_winner(
+        SolveOutcome(True, "f{x}", 1, None, "solved",
+                     session=None, engine="kimi", workdir=str(workdir),
+                     flags=["f{x}"]),
+        "f{x}", worker_id="cli-kimi-1")
+
+    winner = json.loads((graph_dir.parent / "winner.json").read_text())
+    assert winner["session"] == ""
+    assert winner["engine"] == "kimi"
+    assert winner["worker_id"] == "cli-kimi-1"
+    assert winner["workdir"] == str(workdir)
+    assert winner["flag"] == "f{x}"
+    assert winner["flags"] == ["f{x}"]
+    # The coordinator-owned continuation receives the same context.
+    assert trusted["session"] == ""
+    assert trusted["workdir"] == str(workdir)
+    assert trusted["worker_id"] == "cli-kimi-1"
 
 
 def test_private_winner_continuation_keeps_minimal_trusted_state(tmp_path):
