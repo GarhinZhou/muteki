@@ -118,19 +118,6 @@ export function ResultsPanel({
         <div className="results-actions">
           <button
             type="button"
-            className="results-generate"
-            onClick={onGenerate}
-            disabled={pending || running}
-          >
-            <Icon name={pending ? "clock" : "pencil"} size={13} />
-            {pending
-              ? t("results.generatingAction")
-              : writeup
-                ? t("results.regenerate")
-                : t("results.generate")}
-          </button>
-          <button
-            type="button"
             className="results-back"
             onClick={onShowConversation}
           >
@@ -263,6 +250,19 @@ export function ResultsPanel({
                   </button>
                 </>
               ) : null}
+              <button
+                type="button"
+                className="results-generate"
+                onClick={onGenerate}
+                disabled={pending || running}
+              >
+                <Icon name={pending ? "clock" : "pencil"} size={13} />
+                {pending
+                  ? t("results.generatingAction")
+                  : writeup
+                    ? t("results.regenerate")
+                    : t("results.generate")}
+              </button>
             </div>
           </div>
           {deck.writeupArtifactPath ? (
@@ -292,15 +292,6 @@ export function ResultsPanel({
               <Icon name="pencil" size={20} />
               <b>{t("results.empty")}</b>
               <span>{t("results.emptyHint")}</span>
-              <button
-                type="button"
-                className="results-generate"
-                onClick={onGenerate}
-                disabled={running}
-              >
-                <Icon name="pencil" size={13} />
-                {t("results.generate")}
-              </button>
             </div>
           )}
         </section>

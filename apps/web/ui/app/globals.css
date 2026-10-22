@@ -2860,6 +2860,12 @@ code, pre, kbd, .rid, .artifact-code, .runtime-context, .runtime-trace-labels,
   border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: var(--shadow-sm); }
 .results-report-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .results-report-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-left: auto; }
+.results-report-actions .results-generate { min-height: 28px; display: inline-flex; align-items: center;
+  gap: 5px; padding: 3px 9px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line2));
+  border-radius: 7px; background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  color: var(--bright); font: 650 11px/1.4 var(--font-sans); cursor: pointer; }
+.results-report-actions .results-generate:hover:not(:disabled) { border-color: var(--accent); }
+.results-report-actions .results-generate:disabled { opacity: .5; cursor: not-allowed; }
 .results-artifact { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--dim); font-family: var(--font-mono); font-size: 10px; }
 .results-md { color: var(--text); }
