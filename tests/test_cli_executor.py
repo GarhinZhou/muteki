@@ -5057,6 +5057,18 @@ def test_target_override_used_in_prompt():
     assert "Target: http://new" in p and "http://old" not in p
 
 
+def test_prompt_carries_challenge_title_category_and_target():
+    s = _steer_solver()
+    prompt = s._build_prompt()
+    assert "Challenge: login [web]" in prompt
+    assert "Target: http://old" in prompt
+    # Explore/shell prompts share the same framing; category is load-bearing
+    # because the operator can override it from the composer.
+    explore = s._build_explore_prompt()
+    assert "Challenge: login [web]" in explore
+    assert "Target: http://old" in explore
+
+
 def test_standing_guidance_injected_into_prompt():
     s = _steer_solver()
     s._standing_guidance = ["use VPS ssh root@1.2.3.4"]
@@ -5375,6 +5387,10 @@ def test_standby_writeup_without_session_inlines_verified_evidence(tmp_path):
     assert "## Confirmed run evidence" in prompt
     assert "flag{paper}" in prompt
     assert "ret2shellcode execve" in prompt
+    # Title/target from the composer reach the post-solve writeup worker too,
+    # even when it has no resumable session to remember them.
+    assert "Challenge: PaperShell [pwn]" in prompt
+    assert "Target: nc1.example:12084" in prompt
     # No dangling pointer to a file the worker is forbidden to read.
     assert "READ IT FIRST" not in prompt
     assert captured["timeout"] == 300

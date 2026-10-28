@@ -22,6 +22,25 @@ import { clampRailWidth, railWidthMax, RAIL_WIDTH_DEFAULT, RAIL_WIDTH_MIN, RAIL_
  *  - Archived rows are hidden behind a toggle.
  */
 
+const COLLAPSED_FOLDERS_KEY = "muteki.rail.collapsedFolders";
+
+function readCollapsedFolders(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(COLLAPSED_FOLDERS_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(
+      parsed.filter(
+        (value): value is string => typeof value === "string" && value.length > 0,
+      ),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
 type RailAction =
   | { kind: "pin"; runId: string; pinned: boolean }
   | { kind: "archive"; runId: string; archived: boolean }
@@ -88,8 +107,28 @@ export function ThreadRail({
   // (folder id, or "" for the top-level Recent group) for the drop highlight.
   const [dragRun, setDragRun] = useState<string | null>(null);
   const [dropZone, setDropZone] = useState<string | null>(null);
+  // Folder open/closed state is a durable operator preference: the rail is
+  // unmounted when the settings page opens, and a reload used to restore every
+  // folder expanded. Persist collapsed ids so returning from settings keeps the
+  // exact layout. Read after mount to avoid an SSR/hydration mismatch.
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [collapsedFoldersReady, setCollapsedFoldersReady] = useState(false);
   const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
+  useEffect(() => {
+    setCollapsedFolders(readCollapsedFolders());
+    setCollapsedFoldersReady(true);
+  }, []);
+  useEffect(() => {
+    if (!collapsedFoldersReady) return;
+    try {
+      window.localStorage.setItem(
+        COLLAPSED_FOLDERS_KEY,
+        JSON.stringify(Array.from(collapsedFolders)),
+      );
+    } catch {
+      // localStorage unavailable — keep the in-memory state for this session.
+    }
+  }, [collapsedFolders, collapsedFoldersReady]);
   const [resizing, setResizing] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const resizeCleanup = useRef<(() => void) | null>(null);

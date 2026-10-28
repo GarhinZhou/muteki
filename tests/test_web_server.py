@@ -166,6 +166,41 @@ async def test_credentials_endpoint_reads_shared_graph(tmp_path) -> None:
     assert creds[0]["value"] == "hunter2"
 
 
+def test_infer_challenge_preserves_explicit_direction() -> None:
+    from apps.web.drivers import _infer_challenge
+
+    explicit = _infer_challenge({
+        "prompt": "web3 challenge at http://from-prompt:8080",
+        "challenge": {
+            "category": "web3",
+            "name": "Operator title",
+            "target": "ssh://ops@from-form:2222",
+        },
+    })
+    assert explicit["challenge"]["category"] == "web3"
+    assert explicit["challenge"]["name"] == "Operator title"
+    assert explicit["challenge"]["target"] == "ssh://ops@from-form:2222"
+    assert "category" not in explicit["_inferred_fields"]
+    assert "name" not in explicit["_inferred_fields"]
+    assert "target" not in explicit["_inferred_fields"]
+
+    inferred = _infer_challenge({
+        "prompt": "prompt injection against an LLM chatbot",
+    })
+    assert inferred["challenge"]["category"] == "ai"
+    assert "category" in inferred["_inferred_fields"]
+
+    # The LLM dispatch parser may refine inferred fields, but it must never
+    # replace an operator-supplied title/target/category.
+    from apps.web.drivers import _llm_may_override
+
+    explicit_fields = set(explicit["_inferred_fields"])
+    for field in ("name", "target", "category"):
+        assert not _llm_may_override(
+            field, explicit_fields, explicit["challenge"][field]
+        )
+
+
 async def test_exp_endpoint_returns_preserved_winner_scripts(tmp_path) -> None:
     from muteki.solver.deliverables import preserve_winner_deliverables
 

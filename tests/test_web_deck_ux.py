@@ -707,6 +707,50 @@ def test_dispatch_threads_custom_flag_wrapper():
     assert '"composer.flagWrapperTitle"' in i18n
 
 
+def test_dispatch_threads_ctf_title_and_remote_target():
+    src = (UI_ROOT / "app" / "page.tsx").read_text()
+    convo = (UI_ROOT / "components" / "Conversation.tsx").read_text()
+    i18n = (UI_ROOT / "lib" / "i18n.tsx").read_text()
+
+    assert "challengeTitle?: string" in convo
+    assert "target?: string" in convo
+    assert 'challenge.name = opts.challengeTitle.trim()' in src
+    assert 'challenge.target = opts.target.trim()' in src
+    assert 't("composer.challengeTitlePlaceholder")' in convo
+    assert 't("composer.targetPlaceholder")' in convo
+    assert '"composer.challengeTitle"' in i18n
+    assert '"composer.target"' in i18n
+
+
+def test_run_started_folds_operator_title_and_target_into_deck():
+    helper = UI_ROOT / "lib" / "events.ts"
+    script = textwrap.dedent(
+        f"""
+        const fs = require("fs");
+        const ts = require("typescript");
+        const vm = require("vm");
+        const source = fs.readFileSync({json.dumps(str(helper))}, "utf8");
+        const out = ts.transpileModule(source, {{
+          compilerOptions: {{ module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }}
+        }}).outputText;
+        const sandbox = {{ module: {{ exports: {{}} }}, exports: {{}} }};
+        sandbox.exports = sandbox.module.exports;
+        vm.runInNewContext(out, sandbox, {{ filename: "events.js" }});
+        const lib = sandbox.module.exports;
+        function assert(cond, msg) {{ if (!cond) throw new Error(msg); }}
+
+        let s = lib.emptyDeck("run-title-target");
+        s = lib.reduce(s, {{ event_type: lib.EventType.RUN_STARTED, run_id: "run-title-target", ts: 1,
+          payload: {{ challenge: {{ name: "Operator title", category: "web3",
+                                  target: "ssh://ops@from-form:2222" }} }} }});
+        assert(s.challengeName === "Operator title", "title folded");
+        assert(s.category === "web3", "category folded");
+        assert(s.target === "ssh://ops@from-form:2222", "target folded");
+        """
+    )
+    _run_ui_node(script)
+
+
 def test_advanced_flag_format_layout_is_not_cramped():
     convo = (UI_ROOT / "components" / "Conversation.tsx").read_text()
     css = (UI_ROOT / "app" / "globals.css").read_text()
@@ -1094,6 +1138,40 @@ def test_code_highlighter_preserves_source_and_marks_tokens():
     _run_ui_node(script)
 
 
+def test_reason_plan_parser_turns_planner_json_into_structured_data():
+    helper = UI_ROOT / "lib" / "reasonPlan.ts"
+    helper_path = json.dumps(str(helper))
+    script = """
+        const fs = require("fs");
+        const ts = require("typescript");
+        const vm = require("vm");
+        const source = fs.readFileSync(""" + helper_path + """, "utf8");
+        const out = ts.transpileModule(source, {
+          compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
+        }).outputText;
+        const sandbox = { module: { exports: {} }, exports: {} };
+        sandbox.exports = sandbox.module.exports;
+        vm.runInNewContext(out, sandbox, { filename: "reasonPlan.js" });
+        const lib = sandbox.module.exports;
+        function assert(cond, msg) { if (!cond) throw new Error(msg); }
+
+        const sample = '{"verdict":"explore","goal_met":false,"intents":[{"id":"I1","from":[7,8],"goal":"Find BSS overflow","worker_class":"code","route_hash":"pwn:bss"}],"pinned_facts":[7,8],"audit":["#8 truncated"]}';
+        const plan = lib.parseReasonPlan(sample);
+        assert(plan !== null, "plan parsed");
+        assert(plan.verdict === "explore", "verdict");
+        assert(plan.intents.length === 1 && plan.intents[0].from[1] === 8, "intent from");
+        assert(plan.intents[0].routeHash === "pwn:bss", "route");
+        assert(plan.pinnedFacts.length === 2, "pins");
+        assert(plan.audit.length === 1, "audit");
+
+        const fenced = "Here is the plan:\\n```json\\n" + sample + "\\n```\\n";
+        assert(lib.parseReasonPlan(fenced).intents[0].goal === "Find BSS overflow", "fenced");
+        assert(lib.parseReasonPlan('{"foo":1}') === null, "non-plan json");
+        assert(lib.parseReasonPlan("no json here") === null, "no json");
+        """
+    _run_ui_node(textwrap.dedent(script))
+
+
 def test_events_reducer_labels_resolve_reopen_separately_from_false_positive():
     helper = UI_ROOT / "lib" / "events.ts"
     script = textwrap.dedent(
@@ -1369,7 +1447,7 @@ def test_graph_toolbar_solver_chips_use_shared_dropdown():
     assert ".graph-solver-rail" not in css
     assert ".graph-solvers " not in css
     assert ".graph-solver-filter" in css
-    assert ".graph-solver-filter .chip-filter-panel" in css
+    assert ".graph-toolbar .graph-solver-filter.chip-filterbar .chip-filter-panel" in css
     assert ".graph-toolbar .legend" in css
     assert "max-width: 82px" in css
     assert "graph.solversExpand" in i18n and "graph.solversCollapse" in i18n
@@ -1438,7 +1516,7 @@ def test_blackboard_worker_chips_wrap_when_expanded():
     assert ".bb-worker-filter" in css
     assert ".bb-worker-toggle" not in css
     assert ".bb-worker-railbox" not in css
-    assert ".bb-worker-filter .chip-filter-panel" in css
+    assert ".bb-toolbar .bb-worker-filter.chip-filterbar .chip-filter-panel" in css
     shared_filter_css = css[css.index(".chip-filter-strip"):css.index(".chip-filter-clear")]
     assert "flex-wrap: wrap" in shared_filter_css
     assert "overflow-y: auto" in shared_filter_css
@@ -2284,6 +2362,54 @@ async def test_swarm_driver_threads_expected_flags(tmp_path, monkeypatch):
     await driver(FakeRun())
     assert cap["expected_flags"] == 22
     assert cap["flag_format"] == "token"
+
+
+async def test_swarm_driver_threads_ctf_title_target_and_direction(tmp_path, monkeypatch):
+    # The composer's optional title / remote target and the custom direction must
+    # survive _infer_challenge + _swarm_driver and land on Challenge, which is the
+    # object every worker prompt and the Reason summary read.
+    from apps.web import drivers
+
+    cap = {}
+
+    class FakeSwarm:
+        def __init__(self, challenge, lineup, **kw):
+            cap["name"] = challenge.name
+            cap["category"] = challenge.category
+            cap["target"] = challenge.target
+
+        async def run(self):
+            class O:
+                flag = None; solved = False; winner = None
+            return O()
+
+    monkeypatch.setattr(drivers, "_resolve_swarm_class", lambda _spec: FakeSwarm)
+
+    class FakeBus:
+        async def emit(self, *a, **k): pass
+        async def close(self): pass
+        def add_sink(self, *a): pass
+
+    class FakeRun:
+        run_id = "r-title-target"; bus = FakeBus(); hitl = None; worker_cmds = None
+        cost = None; flag = None
+
+    driver = drivers._swarm_driver(drivers._infer_challenge({
+        "kind": "swarm",
+        "prompt": "solve it at http://from-prompt:8080",
+        "challenge": {
+            "description": "solve it",
+            "name": "Operator title",
+            "category": "web3",
+            "target": "ssh://ops@from-form:2222",
+        },
+    }))
+    await driver(FakeRun())
+    assert cap == {
+        "name": "Operator title",
+        "category": "web3",
+        "target": "ssh://ops@from-form:2222",
+    }
 
 
 async def test_swarm_driver_threads_custom_flag_wrapper_as_prompt_hint(tmp_path, monkeypatch):

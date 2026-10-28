@@ -962,8 +962,10 @@ class _CoordinatorLoopMixin:
                                 self._cancel_solver(task_solvers.get(other))
                                 other.cancel()
                     elif self._flags_complete():
-                        winner = "coordinator"
-                        flag = self._found_flags[0] if self._found_flags else None
+                        candidate_flag = (
+                            self._found_flags[0] if self._found_flags else flag)
+                        winner, flag = self._promote_blackboard_winner(
+                            per_solver, candidate_flag)
                         try:
                             await self.insight.all_flags_found(
                                 "coordinator", count=len(self._found_flags))
@@ -2290,8 +2292,10 @@ class _CoordinatorLoopMixin:
                             and getattr(rr, "verdict", "") == "complete"
                             and self._flags_complete()):
                         if winner is None:
-                            winner = "coordinator"
-                            flag = self._found_flags[0] if self._found_flags else None
+                            candidate_flag = (
+                                self._found_flags[0] if self._found_flags else flag)
+                            winner, flag = self._promote_blackboard_winner(
+                                per_solver, candidate_flag)
                         await _emit_bb(
                             "goal_complete",
                             why=getattr(rr, "complete_why", "")[:300],

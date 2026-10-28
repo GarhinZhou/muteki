@@ -15,7 +15,7 @@ from muteki.core.llm import LLMClient
 from muteki.models.solve_graph import Category, QuantityKind
 
 _CATEGORIES: frozenset[str] = frozenset(
-    ("web", "pwn", "reverse", "crypto", "forensics", "misc"),
+    ("web", "pwn", "reverse", "ai", "crypto", "forensics", "misc"),
 )
 _QUANTITIES: frozenset[str] = frozenset(("first", "collect", "recon"))
 
@@ -25,7 +25,7 @@ _SYSTEM = (
     "Do not visit URLs or browse the web. Use null for any field you cannot "
     "determine from the text. Fields:\n"
     "  name: short human title in the prompt's language (3-12 words / 8-24 CJK chars)\n"
-    "  category: one of web, pwn, reverse, crypto, forensics, misc\n"
+    "  category: one of web, pwn, reverse, ai, crypto, forensics, misc\n"
     "  target: the primary URL or host:port to attack, or null\n"
     "  scope: in-scope assets (URL/host/path), or null\n"
     "  finding_class: vulnerability class if stated (sqli, xss, rce, idor, ssrf, "

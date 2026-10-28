@@ -28,6 +28,7 @@ MAX_FILE_BYTES = 256_000
 
 _CODE_SUFFIXES = {
     ".py": "python",
+    ".sage": "python",
     ".sh": "bash",
     ".bash": "bash",
     ".zsh": "bash",
@@ -56,8 +57,8 @@ _CODE_SUFFIXES = {
 }
 
 _SKIP_DIRS = {
-    "arts", "inputs", "shared", "logs", "tmp", "homes", "graph", "final",
-    "workers", "node_modules", ".git", ".venv", "__pycache__",
+    "arts", "inputs", "shared", "objects", "links", "logs", "tmp", "homes",
+    "graph", "final", "workers", "node_modules", ".git", ".venv", "__pycache__",
 }
 _EXP_PREFIXES = (
     "exp", "exploit", "poc", "solve", "solver", "rce", "payload",
@@ -110,7 +111,10 @@ def _safe_name(name: str, used: set[str]) -> str:
 
 
 def _iter_source_files(workdir: Path) -> Iterable[Path]:
-    roots = [workdir / "scratch", workdir]
+    # Crypto/forensics workers often publish their reusable solver under the
+    # team board's `shared/` directory rather than `scratch/`. Include it as an
+    # explicit root (it remains excluded from the recursive workdir walk below).
+    roots = [workdir / "scratch", workdir / "shared", workdir]
     seen: set[Path] = set()
     for root in roots:
         if not root.is_dir():
@@ -242,6 +246,12 @@ def preserve_winner_deliverables(
         return []
 
     candidates = _candidates(worker_dir, max_files=max_files)
+    if not candidates:
+        # Some workers publish reusable scripts through the run-level shared
+        # directory (or a symlink to it), so the winner cwd can be empty.
+        shared_root = workspace / "shared"
+        if shared_root.is_dir() and not shared_root.is_symlink():
+            candidates = _candidates(shared_root, max_files=max_files)
     if exp_dir.exists():
         shutil.rmtree(exp_dir, ignore_errors=True)
     exp_dir.mkdir(parents=True, exist_ok=True)
@@ -354,6 +364,10 @@ def discover_deliverables(
                 candidates.extend(_candidates(child, max_files=max_files))
             candidates.sort(key=lambda item: (-item.score, item.size, item.rel))
             candidates = candidates[:max_files]
+    if not candidates:
+        shared_root = workspace / "shared"
+        if shared_root.is_dir() and not shared_root.is_symlink():
+            candidates = _candidates(shared_root, max_files=max_files)
     out: list[dict[str, Any]] = []
     for item in candidates:
         if item.size > max_bytes:

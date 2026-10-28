@@ -1665,8 +1665,9 @@ function Deck() {
     // webSearch off → offline (backend denies the worker's WebSearch/WebFetch and,
     // by implication, the KB — a clean black-box run).
     const offline = opts ? !opts.webSearch : false;
-    // pentest mode (goal-driven, no flag) adds goal/scope. CTF (default) sends
-    // nothing extra so its dispatch body stays byte-identical.
+    // pentest mode (goal-driven, no flag) adds goal/scope. CTF (default) adds the
+    // optional operator title/target and direction; all are explicit overrides
+    // that the backend's prompt/LLM inference must not replace.
     const challenge: Record<string, unknown> = {
       description: prompt,
       attachments: attachments.map((f) => f.path),
@@ -1679,6 +1680,13 @@ function Deck() {
         challenge.expected_findings = opts.collectCount;
       }
     } else {
+      if (opts?.category) challenge.category = opts.category;
+      if (opts?.challengeTitle?.trim()) {
+        challenge.name = opts.challengeTitle.trim();
+      }
+      if (opts?.target?.trim()) {
+        challenge.target = opts.target.trim();
+      }
       if (opts?.flagFormat === "token") {
         challenge.flag_format = "token";
       } else if (opts?.flagFormat === "custom" && opts.flagWrapper?.trim()) {

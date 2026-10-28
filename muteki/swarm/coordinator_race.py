@@ -222,8 +222,10 @@ class _RaceHealthMixin:
                 if winner is None:
                     self._sync_flags_from_graph()
                     if self._flags_complete():
-                        winner = s.solver_id
-                        flag = self._found_flags[0] if self._found_flags else None
+                        candidate_flag = (
+                            self._found_flags[0] if self._found_flags else flag)
+                        winner, flag = self._promote_blackboard_winner(
+                            per_solver, candidate_flag)
                         try:
                             await self.insight.all_flags_found(
                                 "swarm", count=len(self._found_flags))
@@ -844,6 +846,12 @@ class _RaceHealthMixin:
         if not sid:
             return
         self._live_solvers[sid] = worker
+        profile = getattr(getattr(worker, "driver", None), "profile", None)
+        self._worker_artifact_meta[sid] = {
+            "workdir": str(getattr(worker, "_workdir", "") or ""),
+            "engine": str(engine or getattr(worker, "engine", "") or ""),
+            "profile": dict(profile) if isinstance(profile, dict) else {},
+        }
         registry = getattr(self, "worker_registry", None)
         register = getattr(registry, "register", None)
         if callable(register):

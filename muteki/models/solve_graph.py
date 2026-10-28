@@ -14,7 +14,10 @@ from typing import Literal, Never, Optional
 
 from pydantic import BaseModel, Field
 
-Category = Literal["web", "pwn", "reverse", "crypto", "forensics", "misc"]
+# CTF direction label. Canonical values are web/pwn/reverse/ai/crypto/
+# forensics/misc, but operators may add custom directions; unknown labels pass
+# through and simply have no category-specific worker override.
+Category = str
 
 
 class HypothesisStatus(str, Enum):

@@ -3971,6 +3971,12 @@ class CliSolver:
             return ""
 
         facts = list(dict.fromkeys(facts))
+        challenge = self.challenge
+        challenge_context = [
+            f"Challenge: {challenge.name} [{challenge.category}]"
+        ]
+        if self._target():
+            challenge_context.append(f"Target: {self._target()}")
         sections: list[str] = []
         if flags:
             sections.append(
@@ -3983,6 +3989,8 @@ class CliSolver:
             body = body[:24000] + "\n- [evidence truncated]"
         return (
             "\n## Confirmed run evidence (authoritative)\n"
+            + "\n".join(challenge_context)
+            + "\n\n"
             "Use ONLY this snapshot. Cancelled or steered worker intents are not "
             "evidence: a worker may be cancelled AFTER the flag was accepted. "
             "Do not mention them as failures and do not invent commands, outputs, "

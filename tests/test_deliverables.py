@@ -28,22 +28,38 @@ def test_preserve_and_load_winner_exp(tmp_path):
     (scratch / "notes.txt").write_text("not source", encoding="utf-8")
     (scratch / "blob.bin").write_bytes(b"\x00\x01\x02")
     (scratch / "huge.py").write_text("A" * 300_000, encoding="utf-8")
+    shared = workdir / "shared"
+    shared.mkdir()
+    (shared / "longtime_solver.py").write_text(
+        "from hashlib import sha256\nprint('crypto solve')\n", encoding="utf-8")
+    (shared / "solve.sage").write_text(
+        "print('sage solve')\n", encoding="utf-8")
 
     files = preserve_winner_deliverables(workspace, workdir)
 
     names = [item["name"] for item in files]
-    assert set(names) == {"exp.py", "rce.sh"}
+    # A crypto solver publishes its reusable script under shared/, not scratch/.
+    assert set(names) == {
+        "exp.py", "rce.sh", "longtime_solver.py", "solve.sage",
+    }
     loaded = load_preserved_deliverables(workspace)
     by_name = {item["name"]: item for item in loaded}
-    assert set(by_name) == {"exp.py", "rce.sh"}
+    assert set(by_name) == {
+        "exp.py", "rce.sh", "longtime_solver.py", "solve.sage",
+    }
     assert by_name["exp.py"]["language"] == "python"
     assert "pwn" in by_name["exp.py"]["content"]
     assert by_name["rce.sh"]["language"] == "bash"
+    assert by_name["longtime_solver.py"]["language"] == "python"
+    assert by_name["solve.sage"]["language"] == "python"
     assert by_name["exp.py"]["source"] == "scratch/exp.py"
+    assert by_name["longtime_solver.py"]["source"] == "shared/longtime_solver.py"
     manifest = json.loads(
         (workspace / "final" / "exp" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["worker_workdir"] == "workers/cli-py-1"
-    assert {row["name"] for row in manifest["files"]} == {"exp.py", "rce.sh"}
+    assert {row["name"] for row in manifest["files"]} == {
+        "exp.py", "rce.sh", "longtime_solver.py", "solve.sage",
+    }
 
 
 def test_preserve_skips_symlink_escape_and_is_empty_without_candidates(tmp_path):
@@ -76,6 +92,24 @@ def test_preserve_does_not_follow_symlinked_final_dir(tmp_path):
 
     assert files == []
     assert list(outside.iterdir()) == []
+
+
+def test_deliverables_fall_back_to_run_shared_dir(tmp_path):
+    workspace = _workspace(tmp_path)
+    shared = workspace / "shared"
+    shared.mkdir(parents=True)
+    (shared / "crypto_solver.py").write_text(
+        "from hashlib import sha256\nprint('solve')\n", encoding="utf-8")
+    workdir = workspace / "workers" / "cli-empty"
+    workdir.mkdir(parents=True)
+
+    found = discover_deliverables(workspace)
+    assert [item["name"] for item in found] == ["crypto_solver.py"]
+
+    files = preserve_winner_deliverables(workspace, workdir)
+    assert [item["name"] for item in files] == ["crypto_solver.py"]
+    loaded = load_preserved_deliverables(workspace)
+    assert [item["name"] for item in loaded] == ["crypto_solver.py"]
 
 
 def test_discover_deliverables_falls_back_to_winner_workdir(tmp_path):

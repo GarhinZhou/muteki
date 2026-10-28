@@ -28,7 +28,7 @@ from muteki.core.runtime_env import is_web_container
 from muteki.core.events import Event, EventType, blackboard_delta_payload
 from muteki.core.llm import LLMClient, ModelSpec
 from muteki.models.solve_graph import (
-    Challenge, engagement_goal_of, engagement_reports_complete,
+    Challenge, SolveGraph, engagement_goal_of, engagement_reports_complete,
 )
 from muteki.solver.gate import finding_key
 from muteki.solver.vuln_report import (
@@ -654,6 +654,73 @@ class _FlagsBusMixin:
         fresh = self._record_flags(*(f for f in graph_flags if f not in invalidated))
         return fresh
 
+    def _flag_source_worker(self, flag: Optional[str]) -> str:
+        """Which Worker's flag_found event first made this flag authoritative?
+
+        A blackboard/DB flag can arrive after its Worker was cancelled, so the
+        Coordinator never reaps a clean ``SolveOutcome``. The graph event still
+        carries the actor; use it to keep winner attribution/EXP preservation
+        tied to the real Worker rather than the synthetic "coordinator" label.
+        """
+        wanted = str(flag or "").strip()
+        if not wanted or self.shared_graph is None:
+            return ""
+        try:
+            events = self.shared_graph.events_since(0, kinds=["flag_found"])
+        except Exception:
+            return ""
+        for ev in reversed(events):
+            payload = ev.get("payload") or {}
+            if str(payload.get("flag") or "").strip() != wanted:
+                continue
+            actor = str(ev.get("actor") or "").strip()
+            if actor and actor != "coordinator":
+                return actor
+        return ""
+
+    def _winner_outcome_for_worker(
+        self, worker_id: str, flag: Optional[str],
+    ) -> Optional[SolveOutcome]:
+        """Build the minimal SolveOutcome needed to persist a cancelled winner.
+
+        The Worker may have been killed immediately after submitting the flag:
+        its task returns CancelledError, not an outcome, but its workdir still
+        exists until finalize sweeps scratch. Capture that workdir now so
+        ``preserve_winner_deliverables`` can copy the EXP script before cleanup.
+        """
+        meta = getattr(self, "_worker_artifact_meta", {}).get(worker_id)
+        if not isinstance(meta, dict):
+            return None
+        return SolveOutcome(
+            solved=True,
+            flag=flag,
+            steps=0,
+            graph=SolveGraph(challenge=self.challenge),
+            flags=list(getattr(self, "_found_flags", []) or []),
+            engine=str(meta.get("engine") or ""),
+            workdir=str(meta.get("workdir") or ""),
+            runtime_profile=dict(meta.get("profile") or {}),
+        )
+
+    def _promote_blackboard_winner(
+        self, per_solver: dict[str, SolveOutcome], flag: Optional[str],
+    ) -> tuple[str, Optional[str]]:
+        """Choose winner=source-Worker when a flag arrived via the blackboard.
+
+        Returns ``(winner_id, flag)``. If the source Worker is already in
+        ``per_solver`` its real outcome wins; otherwise install the minimal
+        outcome so finalize can persist continuation metadata + EXP scripts.
+        Only when no actor is recoverable do we keep the legacy
+        ``winner="coordinator"`` fallback (which has no workdir and therefore
+        cannot preserve EXP).
+        """
+        source = self._flag_source_worker(flag)
+        if source and (source not in per_solver or per_solver.get(source) is None):
+            outcome = self._winner_outcome_for_worker(source, flag)
+            if outcome is not None:
+                per_solver[source] = outcome
+        return (source or "coordinator"), flag
+
     def _engine_healthcheck_cached(self, name: str, role: str) -> bool:
         """bool liveness for one engine, served from the shared health-probe cache
         (same TTL as _healthy_engines) so the race path doesn't re-shell a CLI we
@@ -1063,6 +1130,24 @@ class _FlagsBusMixin:
                 except Exception:
                     pass
             self._coord_sinks = []
+        # Central safety net: a flag can arrive on the shared graph after its
+        # Worker was cancelled, leaving the loop with winner=None (or the legacy
+        # synthetic "coordinator"). Reconcile once more, then resolve the real
+        # flag_found actor so finalize still persists continuation metadata and
+        # copies EXP before worker scratch is swept.
+        if self.shared_graph is not None:
+            try:
+                self._sync_flags_from_graph()
+            except Exception:
+                pass
+        if ((winner is None or winner == "coordinator")
+                and self._flags_complete()):
+            candidate_flag = (
+                self._found_flags[0] if self._found_flags else flag)
+            promoted, promoted_flag = self._promote_blackboard_winner(
+                per_solver, candidate_flag)
+            if promoted != "coordinator":
+                winner, flag = promoted, promoted_flag
         if winner is not None:
             self._persist_winner(
                 per_solver.get(winner), flag, worker_id=str(winner or ""))

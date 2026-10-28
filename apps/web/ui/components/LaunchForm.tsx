@@ -47,7 +47,7 @@ export function LaunchForm({
         <label>
           <span>Category</span>
           <select value={category} onChange={(e) => setCategory(e.target.value)}>
-            {["web", "crypto", "rev", "pwn", "forensics", "misc"].map((c) => (
+            {["web", "pwn", "reverse", "ai", "crypto", "forensics", "misc"].map((c) => (
               <option key={c} value={c}>{c}</option>
             ))}
           </select>

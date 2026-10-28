@@ -17,7 +17,9 @@ import { SelectionGlider } from "@/components/SelectionGlider";
 import { RunInspector } from "@/components/RunInspector";
 import { CopyText } from "@/components/CopyText";
 import { Markdown } from "@/components/Markdown";
+import { ReasonPlan } from "@/components/ReasonPlan";
 import { ResultsPanel } from "@/components/ResultsPanel";
+import { parseReasonPlan } from "@/lib/reasonPlan";
 import { NumberField } from "@/components/NumberField";
 import { reportToMarkdown } from "@/lib/reportMarkdown";
 import { useCopied } from "@/lib/useCopied";
@@ -38,6 +40,12 @@ import type { ArtifactView } from "@/lib/events";
 export interface DispatchOpts {
   webSearch: boolean;
   mode: "ctf" | "pentest";
+  /** Explicit CTF direction; empty/undefined keeps prompt-based inference. */
+  category?: string;
+  /** Optional operator-supplied challenge title; blank keeps prompt inference. */
+  challengeTitle?: string;
+  /** Optional remote target/environment; blank keeps prompt URL inference. */
+  target?: string;
   goal?: string;
   scope?: string;
   // collect mode only controls multi-flag collection. Flag format is independent:
@@ -61,6 +69,60 @@ export interface DispatchOpts {
 export interface ControlCommandOpts {
   requestId?: string;
   commandId?: string;
+}
+
+export interface CtkDirection {
+  value: string;
+  label: string;
+}
+
+const DEFAULT_CTF_DIRECTIONS: CtkDirection[] = [
+  { value: "web", label: "Web" },
+  { value: "pwn", label: "Pwn" },
+  { value: "reverse", label: "Reverse" },
+  { value: "ai", label: "AI" },
+  { value: "crypto", label: "Crypto" },
+  { value: "misc", label: "Misc" },
+];
+const CTF_DIRECTIONS_KEY = "muteki.ctfDirections";
+const CTF_DIRECTION_KEY = "muteki.ctfDirection";
+
+function defaultCtfDirections(): CtkDirection[] {
+  return DEFAULT_CTF_DIRECTIONS.map((item) => ({ ...item }));
+}
+
+function readCtfDirections(): CtkDirection[] {
+  if (typeof window === "undefined") return defaultCtfDirections();
+  try {
+    const raw = window.localStorage.getItem(CTF_DIRECTIONS_KEY);
+    if (!raw) return defaultCtfDirections();
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return defaultCtfDirections();
+    const seen = new Set<string>();
+    const out: CtkDirection[] = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== "object") continue;
+      const value = String((item as { value?: unknown }).value || "").trim();
+      const label = String((item as { label?: unknown }).label || value).trim();
+      if (!value || !label || seen.has(value)) continue;
+      seen.add(value);
+      out.push({ value: value.slice(0, 40), label: label.slice(0, 40) });
+      if (out.length >= 30) break;
+    }
+    // An empty stored array is a valid operator choice (all directions removed).
+    return out;
+  } catch {
+    return defaultCtfDirections();
+  }
+}
+
+function ctfDirectionValue(label: string): string {
+  const text = label.trim().toLowerCase();
+  if (!text) return "";
+  return text
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
 }
 
 // RUNNING — steer the live swarm:
@@ -179,13 +241,23 @@ function CoordBubble({
   // Agent prose — notably the post-solve writeup ("复盘") — is Markdown. System
   // lifecycle lines and operator text stay verbatim/plain.
   const markdown = m.role === "agent" && (m.kind === "text" || m.kind === "reasoning");
+  // The Reason planner replies with a JSON plan; render the structured card
+  // instead of a wall of JSON while keeping the raw reply behind a disclosure.
+  const reasonPlan = (
+    m.role === "agent"
+    && (m.solverId === "reason" || m.solverId === "coordinator")
+    && (m.kind === "text" || m.kind === "reasoning")
+  ) ? parseReasonPlan(text) : null;
   const standbyReply = m.role === "agent" && m.solverId?.endsWith("-standby");
   const who = m.role === "human" ? t("coord.you") : m.role === "system"
     ? (m.kind === "insight" ? "insight" : "system")
     : standbyReply ? t("coord.solveWorker") : t("coord.title");
   const cls = m.role === "human" ? "you" : m.role === "system" ? `system ${m.kind}` : `coordinator ${m.kind}`;
-  // long coordinator reasoning folds to keep the thread scannable
-  const isLong = m.role === "agent" && m.kind === "reasoning" && text.length > 520;
+  // long coordinator reasoning folds to keep the thread scannable (a parsed
+  // Reason plan has its own structured card and stays fully visible)
+  const isLong = (
+    m.role === "agent" && m.kind === "reasoning" && text.length > 520 && !reasonPlan
+  );
   // Coordinator-produced prose (text/reasoning) is what a generated writeup lands
   // as — there is no distinct "writeup" message kind, so any substantive agent
   // bubble gets a copy button. Copying the whole report into a ticket/writeup is
@@ -214,7 +286,11 @@ function CoordBubble({
         )}
         {clock(m.ts) && <span className="ts">{clock(m.ts)}</span>}
       </div>
-      {isLong ? (
+      {reasonPlan ? (
+        <div className="body">
+          <ReasonPlan plan={reasonPlan} raw={text} />
+        </div>
+      ) : isLong ? (
         <details className="coord-fold">
           <summary>{text.slice(0, 240).trimEnd()}…</summary>
           <div className="body">
@@ -875,6 +951,17 @@ function Composer({
   const [dragOver, setDragOver] = useState(false);
   const [webSearch, setWebSearch] = useState(true);
   const [mode, setMode] = useState<"ctf" | "pentest">("ctf");
+  // CTF direction: the default six directions are editable; custom directions
+  // are persisted per browser, and "" means "let the prompt inference decide".
+  const [directions, setDirections] = useState<CtkDirection[]>(defaultCtfDirections);
+  const [direction, setDirection] = useState("");
+  const [directionEditorOpen, setDirectionEditorOpen] = useState(false);
+  const [newDirection, setNewDirection] = useState("");
+  const directionRef = useRef<HTMLDivElement>(null);
+  // Optional per-solve metadata. They are deliberately NOT persisted across
+  // dispatches: a title/target belongs to exactly one challenge.
+  const [challengeTitle, setChallengeTitle] = useState("");
+  const [target, setTarget] = useState("");
   const [goal, setGoal] = useState("");
   const [scope, setScope] = useState("");
   const [collect, setCollect] = useState(false);
@@ -899,6 +986,16 @@ function Composer({
       if (saved === "0") setWebSearch(false);
       const m = window.localStorage.getItem("muteki.mode");
       if (m === "pentest") setMode("pentest");
+      const savedDirections = readCtfDirections();
+      setDirections(savedDirections);
+      const savedDirection = window.localStorage.getItem(CTF_DIRECTION_KEY);
+      if (savedDirection !== null) {
+        setDirection(
+          savedDirections.some((item) => item.value === savedDirection)
+            ? savedDirection
+            : "",
+        );
+      }
       if (window.localStorage.getItem("muteki.collect") === "1") setCollect(true);
       const savedFlagFormat = window.localStorage.getItem("muteki.flagFormat");
       if (savedFlagFormat === "token" || savedFlagFormat === "custom") setFlagFormat(savedFlagFormat);
@@ -920,6 +1017,58 @@ function Composer({
     }).catch(() => { /* ignore */ });
     return () => { cancelled = true; };
   }, []);
+  useEffect(() => {
+    if (!directionEditorOpen) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!directionRef.current?.contains(event.target as Node)) {
+        setDirectionEditorOpen(false);
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDirectionEditorOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [directionEditorOpen]);
+  const saveDirections = (next: CtkDirection[]) => {
+    setDirections(next);
+    try {
+      window.localStorage.setItem(CTF_DIRECTIONS_KEY, JSON.stringify(next));
+    } catch { /* ignore */ }
+  };
+  const pickDirection = (value: string) => {
+    setDirection(value);
+    try { window.localStorage.setItem(CTF_DIRECTION_KEY, value); } catch { /* ignore */ }
+  };
+  const addDirection = () => {
+    const label = newDirection.trim().slice(0, 24);
+    if (!label) return;
+    const value = ctfDirectionValue(label);
+    if (!value) return;
+    const existing = directions.find((item) => item.value === value);
+    if (existing) {
+      pickDirection(existing.value);
+      setNewDirection("");
+      return;
+    }
+    const next = [...directions, { value, label }];
+    saveDirections(next);
+    pickDirection(value);
+    setNewDirection("");
+  };
+  const removeDirection = (value: string) => {
+    const next = directions.filter((item) => item.value !== value);
+    saveDirections(next);
+    if (direction === value) pickDirection("");
+  };
+  const resetDirections = () => {
+    saveDirections(defaultCtfDirections());
+    pickDirection("");
+  };
   const toggleWeb = () => setWebSearch((v) => {
     const nv = !v;
     try { window.localStorage.setItem("muteki.webSearch", nv ? "1" : "0"); } catch { /* ignore */ }
@@ -987,14 +1136,22 @@ function Composer({
     const dispatched = await onDispatch(v, mode === "pentest"
       ? { webSearch, mode, goal: goal.trim(), scope: scope.trim(),
           collectCount: parseInt(collectCount, 10) || 0, containerMode, ...runCaps }
-      : { webSearch, mode: "ctf", collect, containerMode,
+      : { webSearch, mode: "ctf", category: direction || undefined,
+          challengeTitle: challengeTitle.trim() || undefined,
+          target: target.trim() || undefined,
+          collect, containerMode,
           flagFormat,
           flagWrapper: flagFormat === "custom" ? flagWrapper.trim() : undefined,
           collectCount: collect ? (parseInt(collectCount, 10) || 0) : undefined,
           ...runCaps });
     // Intercepted dispatches (open-ended collect confirm) keep the text so
-    // "返回填写数量" does not throw the prompt away.
-    if (dispatched !== false) setText("");
+    // "返回填写数量" does not throw the prompt away. Successful dispatch consumes
+    // the one-shot title/target too.
+    if (dispatched !== false) {
+      setText("");
+      setChallengeTitle("");
+      setTarget("");
+    }
   };
   const command = (action: string) => {
     const raw = text.trim();
@@ -1066,6 +1223,127 @@ function Composer({
                 onClick={() => pickMode("pentest")}
               >{t("composer.modePentest")}</button>
             </div>
+            {mode === "ctf" && (
+              <div className="ctf-direction-wrap" ref={directionRef}>
+                <span className="ctf-direction-label">{t("composer.direction")}</span>
+                <select
+                  className="ctf-direction-select"
+                  value={direction}
+                  onChange={(e) => pickDirection(e.target.value)}
+                  title={t("composer.directionTitle")}
+                  aria-label={t("composer.direction")}
+                >
+                  <option value="">{t("composer.directionAuto")}</option>
+                  {directions.map((item) => (
+                    <option key={item.value} value={item.value}>{item.label}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className={`ctf-direction-edit${directionEditorOpen ? " on" : ""}`}
+                  onClick={() => setDirectionEditorOpen((v) => !v)}
+                  title={t("composer.directionEdit")}
+                  aria-label={t("composer.directionEdit")}
+                  aria-expanded={directionEditorOpen}
+                >
+                  <Icon name="pencil" size={12} />
+                </button>
+                {directionEditorOpen && (
+                  <div className="ctf-direction-editor">
+                    <div className="ctf-direction-editor-head">
+                      <b>{t("composer.directionEdit")}</b>
+                      <button
+                        type="button"
+                        onClick={() => setDirectionEditorOpen(false)}
+                        title={t("composer.directionClose")}
+                        aria-label={t("composer.directionClose")}
+                      >
+                        <Icon name="x" size={12} />
+                      </button>
+                    </div>
+                    <div className="ctf-direction-list">
+                      {directions.map((item) => (
+                        <span
+                          key={item.value}
+                          className={`ctf-direction-chip${direction === item.value ? " on" : ""}`}
+                        >
+                          <button
+                            type="button"
+                            className="ctf-direction-pick"
+                            onClick={() => pickDirection(item.value)}
+                            title={t("composer.directionPick", { name: item.label })}
+                          >
+                            {item.label}
+                          </button>
+                          <button
+                            type="button"
+                            className="ctf-direction-remove"
+                            onClick={() => removeDirection(item.value)}
+                            title={t("composer.directionRemove", { name: item.label })}
+                            aria-label={t("composer.directionRemove", { name: item.label })}
+                          >
+                            <Icon name="x" size={10} />
+                          </button>
+                        </span>
+                      ))}
+                      {directions.length === 0 && (
+                        <span className="ctf-direction-none">{t("composer.directionNone")}</span>
+                      )}
+                    </div>
+                    <div className="ctf-direction-add">
+                      <input
+                        value={newDirection}
+                        onChange={(e) => setNewDirection(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            addDirection();
+                          }
+                        }}
+                        placeholder={t("composer.directionPlaceholder")}
+                        aria-label={t("composer.directionPlaceholder")}
+                      />
+                      <button
+                        type="button"
+                        onClick={addDirection}
+                        disabled={!ctfDirectionValue(newDirection)}
+                      >
+                        {t("composer.directionAdd")}
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      className="ctf-direction-reset"
+                      onClick={resetDirections}
+                    >
+                      {t("composer.directionReset")}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            {mode === "ctf" && (
+              <div className="ctf-meta-wrap">
+                <input
+                  className="ctf-meta-input"
+                  value={challengeTitle}
+                  onChange={(e) => setChallengeTitle(e.target.value)}
+                  maxLength={80}
+                  placeholder={t("composer.challengeTitlePlaceholder")}
+                  title={t("composer.challengeTitleTitle")}
+                  aria-label={t("composer.challengeTitle")}
+                />
+                <input
+                  className="ctf-meta-input target"
+                  value={target}
+                  onChange={(e) => setTarget(e.target.value)}
+                  maxLength={500}
+                  placeholder={t("composer.targetPlaceholder")}
+                  title={t("composer.targetTitle")}
+                  aria-label={t("composer.target")}
+                />
+              </div>
+            )}
           </div>
           <textarea
             ref={dispatchRef}

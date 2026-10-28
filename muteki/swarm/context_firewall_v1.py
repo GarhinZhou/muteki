@@ -83,6 +83,8 @@ def fold_reason_context(
     name = str(getattr(chal, "name", "") or getattr(chal, "id", "") or "challenge")
     cat = str(getattr(chal, "category", "") or "")
     desc = _clip(str(getattr(chal, "description", "") or ""), 220)
+    tgt = _clip(str(getattr(chal, "target", "") or ""), 240)
+    target_line = f"Target: {tgt}\n" if tgt else ""
 
     facts: list[str] = []
     flags: list[str] = []
@@ -144,7 +146,8 @@ def fold_reason_context(
     return (
         f"{PACKET_PREFIX}\n"
         f"Challenge: {name}" + (f" [{cat}]" if cat else "") + "\n"
-        f"Brief: {desc or '(none)'}\n"
+        + target_line
+        + f"Brief: {desc or '(none)'}\n"
         f"Flags captured: {flags_s}\n"
         f"Working facts (max {fact_n}, newest/relevant first):\n{facts_s}\n"
         f"Open intents (max {intent_n}):\n{opens_s}\n"

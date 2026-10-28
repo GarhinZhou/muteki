@@ -769,6 +769,16 @@ class _QueriesViewsMixin:
                                max_dead_ends: Optional[int] = None) -> str:
         c = self.challenge
         lines = [f"# Challenge: {c.name} [{c.category}] ({c.points} pts)"]
+        # The operator may supply an explicit remote environment or title; both
+        # are real planning inputs, not just worker-prompt decoration. Mirror
+        # SolveGraph.to_summary here so Reason sees the same challenge framing
+        # as the workers (this custom summary used to drop Target/Brief).
+        if getattr(c, "target", None):
+            lines.append(f"Target: {c.target}")
+        if getattr(c, "description", ""):
+            desc = str(c.description).strip().replace("\n", " ")
+            if desc:
+                lines.append(f"Brief: {desc[:300]}")
         fact_states = self._fact_state_map()
         want = sorted(fact_seqs)
         if want:

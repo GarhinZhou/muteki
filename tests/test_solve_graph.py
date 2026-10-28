@@ -143,3 +143,8 @@ def test_solvegraph_roundtrip_carries_flags() -> None:
     g.add_flag("flag{b}")
     g2 = SolveGraph.model_validate(g.model_dump())
     assert g2.flags == ["flag{a}", "flag{b}"] and g2.flag == "flag{a}"
+
+
+def test_challenge_accepts_ai_and_custom_directions() -> None:
+    assert Challenge(id="c", name="n", category="ai").category == "ai"
+    assert Challenge(id="c", name="n", category="web3").category == "web3"

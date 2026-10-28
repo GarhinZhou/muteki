@@ -50,6 +50,19 @@ def test_append_then_materialize(tmp_path):
     g.close()
 
 
+def test_reason_summary_includes_explicit_title_target_and_brief(tmp_path):
+    ch = Challenge(
+        id="t2", name="Operator title", category="web3",
+        target="ssh://ops@host:2222", description="line one\nline two",
+    )
+    g = SQLiteSharedGraph.open(db_path=tmp_path / "g.db", challenge=ch)
+    summary = g.to_reason_summary()
+    assert "# Challenge: Operator title [web3]" in summary
+    assert "Target: ssh://ops@host:2222" in summary
+    assert "Brief: line one line two" in summary
+    g.close()
+
+
 def test_dedupe_same_fact(tmp_path):
     g = SQLiteSharedGraph.open(db_path=tmp_path / "g.db", challenge=_chal())
     g.add_evidence(actor="s1", source="x", fact="same", artifact_id="a")

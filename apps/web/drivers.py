@@ -334,6 +334,7 @@ def build_driver(body: dict[str, Any], mgr: RunManager | None = None) -> Driver:
 # seeds the Challenge so a run can start from one sentence.
 
 _CATEGORY_HINTS: list[tuple[str, tuple[str, ...]]] = [
+    ("ai", ("ai challenge", "ai题", "ai 题", "llm", "prompt injection", "jailbreak", "chatbot", "agentic", "大模型")),
     ("crypto", ("rsa", "aes", "cipher", "encrypt", "decrypt", "xor", "crypto", "modulus", "ecc")),
     ("pwn", ("overflow", "ret2", "rop", "shellcode", "pwn", "gets(", "libc", "canary", "heap")),
     ("reverse", ("reverse", "disassemble", "binary", "decompile", "ghidra", "ida", "rev", ".exe", "elf")),

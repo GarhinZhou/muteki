@@ -332,6 +332,12 @@ class Swarm(
         # serializable WorkerRef rows.  Keeping both lets emergency freeze/cancel
         # touch the real subprocess while API/status readers remain decoupled.
         self._live_solvers: dict[str, Any] = {}
+        # Per-worker identity/workdir captured at registration. A Worker that
+        # accepts a flag through the blackboard can be cancelled before its task
+        # returns a SolveOutcome; this map lets finalize still persist the real
+        # winner (and preserve its EXP scripts) instead of falling back to
+        # winner="coordinator" with no workdir.
+        self._worker_artifact_meta: dict[str, dict[str, Any]] = {}
         self._control_frozen = False
         self._freeze_started_at: dict[str, float] = {}
         self._freeze_suspensions: dict[str, str] = {}
