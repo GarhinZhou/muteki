@@ -938,6 +938,9 @@ class CliSolver:
         # or `codex exec resume <id>`. None until the worker's first turn assigns it.
         self._cli_session: Optional[str] = None
         self._last_runtime_status: dict = {}
+        # Path-bearing runtime env kept for post-exit native-session capture. Never
+        # store credential values here; only engine state roots are retained.
+        self._last_worker_env: dict[str, str] = {}
 
         # ── Runtime control channel (live dispatcher control) ─────────────────
         # The CLI worker is a subprocess; these let the swarm/HITL steer it while
@@ -2273,6 +2276,15 @@ class CliSolver:
         found / abort); a daemon monitor thread polls the InsightBus inbox so HITL
         pause/resume (SIGSTOP/SIGCONT) and a sibling's FLAG reach this live worker."""
         env = dict(runtime_env) if runtime_env is not None else self._worker_env(cwd)
+        self._last_worker_env = {
+            key: str(env[key])
+            for key in (
+                "HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "KIMI_CODE_HOME",
+                "GROK_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME",
+                "XDG_CACHE_HOME", "DSH_SESSION_ROOT", "MUTEKI_AGENT_STATE_DIR",
+            )
+            if env.get(key)
+        }
         if not argv_is_final:
             argv = self._apply_runtime_argv(argv, env)
         loop = asyncio.get_running_loop()
@@ -5566,6 +5578,27 @@ class CliSolver:
                 has_live_process = bool(self._live_procs)
             if has_live_process:
                 self.cancel()
+            # Preserve native CLI session JSONL before the scratch tree is swept.
+            # The Muteki event stream remains the canonical record; this adds the
+            # engine-native transcripts (Claude/Codex/Kimi/...) for post-match
+            # upload. Best-effort and never allowed to fail the Worker.
+            try:
+                from muteki.solver.conversation_export import (
+                    preserve_worker_conversation,
+                )
+
+                capture_wd = self._workdir or self._owned_scratch
+                if capture_wd:
+                    preserve_worker_conversation(
+                        workdir=capture_wd,
+                        solver_id=self.solver_id,
+                        engine=self.driver.name,
+                        session=self._cli_session or "",
+                        env=dict(self._last_worker_env or {}),
+                        identity=dict(self.identity or {}),
+                    )
+            except Exception:
+                pass
             # M9/M10: clean a mkdtemp scratch dir we own on EVERY exit path (the
             # in-method rmtree only ran on the no-flag fall-through — solved returned
             # early, cancel/exception skipped it, and respond never cleaned at all).

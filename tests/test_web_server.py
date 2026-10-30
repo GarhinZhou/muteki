@@ -7,11 +7,13 @@ incrementally), then drives it with httpx.
 """
 
 import asyncio
+import io
 import json
 import socket
 import threading
 import time
 import uuid
+import zipfile
 from pathlib import Path
 
 import httpx
@@ -115,6 +117,30 @@ async def test_mock_run_streams_full_event_set_over_sse(server) -> None:
     assert EventType.SOLVE_GRAPH_DELTA.value in seen
     assert EventType.COST_UPDATE.value in seen
     assert EventType.RUN_FINISHED.value in seen
+
+
+async def test_conversation_export_returns_zip(server) -> None:
+    run_id = "conv-export-1"
+    async with httpx.AsyncClient(base_url=server.base, timeout=30, trust_env=False) as client:
+        r = await client.post(f"/api/runs/{run_id}/start", json={"kind": "mock"})
+        assert r.status_code == 200 and r.json()["started"] is True
+        seen: set = set()
+        await asyncio.wait_for(
+            _collect_sse(client, run_id, seen, EventType.RUN_FINISHED.value),
+            timeout=25,
+        )
+        r = await client.get(f"/api/runs/{run_id}/conversation-export")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/zip")
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        names = set(zf.namelist())
+        assert "muteki/events.jsonl" in names
+        assert "muteki/transcript.md" in names
+        assert "manifest.json" in names
+        manifest = json.loads(zf.read("manifest.json"))
+        assert manifest["run_id"] == run_id
+        assert manifest["challenge"]["name"]
+        assert manifest["workers"]
 
 
 async def test_mock_run_finished_carries_terminal_reason(server) -> None:
@@ -227,6 +253,60 @@ async def test_exp_endpoint_returns_preserved_winner_scripts(tmp_path) -> None:
     assert files[0]["name"] == "exp.py"
     assert files[0]["language"] == "python"
     assert "pwn" in files[0]["content"]
+
+
+async def test_exp_endpoint_synthesizes_inline_heredoc_scripts(tmp_path) -> None:
+    """LongTime regression: inline-heredoc solves had no EXP file at all."""
+    mgr = RunManager(sessions_root=tmp_path / "sessions")
+    run = mgr.create("exp-inline-run")
+    workspace = mgr.workspace_dir(run.run_id)
+    exp_dir = workspace / "final" / "exp"
+    exp_dir.mkdir(parents=True)
+    (exp_dir / "manifest.json").write_text(
+        json.dumps({"version": 1, "worker_workdir": "", "files": []}),
+        encoding="utf-8",
+    )
+    captured = workspace / "conversations" / "cli-kimi-2" / "native"
+    captured.mkdir(parents=True)
+    events = [
+        {
+            "type": "context.append_loop_event",
+            "event": {
+                "type": "tool.call",
+                "name": "Bash",
+                "args": {
+                    "command": (
+                        "python3 - <<'EOF'\n"
+                        "print(b'flag{synthetic_EXP}')\n"
+                        "EOF"
+                    )
+                },
+            },
+        },
+    ]
+    (captured / "wire.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in events), encoding="utf-8")
+    mgr.persist_winner_continuation(run.run_id, {
+        "worker_id": "cli-kimi-2",
+        "engine": "kimi",
+        "session": "",
+    })
+    app = create_app(mgr)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        timeout=10,
+        trust_env=False,
+    ) as client:
+        resp = await client.get("/api/runs/exp-inline-run/exp")
+
+    assert resp.status_code == 200
+    files = {row["name"]: row for row in resp.json()["files"]}
+    assert set(files) == {"exp.py", "exp.sh"}
+    assert "flag{synthetic_EXP}" in files["exp.py"]["content"]
+    assert files["exp.py"]["source"] == "synthesized-from-native-conversation"
+    assert "python3 - <<'EOF'" in files["exp.sh"]["content"]
 
 
 async def test_btw_endpoint_streams_one_shot_worker_without_swarm_slot(

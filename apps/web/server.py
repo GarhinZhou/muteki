@@ -41,6 +41,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError as PydanticValidationError
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
+from starlette.background import BackgroundTask
 
 from apps.web.control_adapter import ControlPayloadError
 from apps.web.auth import (
@@ -480,8 +481,68 @@ def create_app(manager: Optional[RunManager] = None) -> FastAPI:
                     workdir = str(candidate)
             except (OSError, ValueError):
                 workdir = ""
-        return {"files": discover_deliverables(
-            workspace, workdir=workdir or None, max_bytes=128_000)}
+        discovered = discover_deliverables(
+            workspace, workdir=workdir or None, max_bytes=128_000)
+        if discovered:
+            return {"files": discovered}
+        # Some Workers solve entirely with inline heredocs and never create a
+        # source file. Recover the executed code from their native session log
+        # (Kimi wire.jsonl, Claude JSONL, Codex rollouts, ...).
+        from muteki.solver.exp_synthesis import ensure_synthesized_exp
+
+        synthesized = await asyncio.to_thread(
+            ensure_synthesized_exp,
+            workspace_root=workspace,
+            solver_id=str(winner.get("worker_id") or ""),
+            engine=str(winner.get("engine") or ""),
+            session=str(winner.get("session") or ""),
+            workdir=workdir or None,
+            sessions_root=mgr.sessions_root,
+        )
+        return {"files": synthesized}
+
+    @app.get("/api/runs/{run_id}/conversation-export")
+    async def run_conversation_export(run_id: str) -> Any:
+        """Download the full conversation archive for one run.
+
+        Includes Muteki's lossless event stream, every Worker's native CLI
+        session JSONL (when discoverable), retained images/videos, and a
+        machine-readable manifest. Built off-loop and deleted after the response.
+        """
+        from muteki.solver.conversation_export import build_conversation_archive
+
+        mgr: RunManager = app.state.manager
+        run = mgr.get(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="unknown run")
+        if not mgr.is_protocol1_run(run_id, run=run):
+            raise HTTPException(
+                status_code=409,
+                detail="PROTOCOL2_CONVERSATION_EXPORT_UNAVAILABLE")
+        try:
+            events = await asyncio.to_thread(run.store.load_all, run_id)
+        except Exception:
+            events = []
+        workspace = mgr.workspace_dir(run_id)
+        archive = await asyncio.to_thread(
+            build_conversation_archive,
+            sessions_root=mgr.sessions_root,
+            run_id=run_id,
+            workspace_root=workspace,
+            challenge_name=run.name or run_id,
+            category=run.category or "",
+            events=events,
+            flags=list(run.flags),
+            expected_flags=run.expected_flags,
+            winner=mgr.load_winner_continuation(run_id),
+        )
+        filename = f"{str(run_id).replace('/', '_')}-conversation.zip"
+        return FileResponse(
+            archive,
+            media_type="application/zip",
+            filename=filename,
+            background=BackgroundTask(lambda: archive.unlink(missing_ok=True)),
+        )
 
     # ── BTW side-query worker (separate one-shot process, no swarm slot) ──────
     # Independent route (not /hitl), no run.hitl queue, no InsightBus GUIDANCE,

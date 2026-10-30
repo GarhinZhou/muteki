@@ -1021,6 +1021,16 @@ const STRINGS: Dict = {
   "results.eyebrow": { zh: "本次解题产出", en: "Run deliverables" },
   "results.title": { zh: "成果", en: "Results" },
   "results.meta": { zh: "{n}/{total} 个已验证 Flag", en: "{n}/{total} verified flags" },
+  "results.exportConversation": { zh: "导出对话记录", en: "Export conversations" },
+  "results.exportingConversation": { zh: "正在打包…", en: "Packaging…" },
+  "results.exportConversationTitle": {
+    zh: "下载本题全部 Worker 的对话、原生 CLI 会话、图片和视频（ZIP）",
+    en: "Download every Worker's conversation, native CLI session, images, and videos (ZIP)",
+  },
+  "results.exportConversationFailed": {
+    zh: "对话导出失败：{detail}",
+    en: "Conversation export failed: {detail}",
+  },
   "results.flags": { zh: "已解出 Flag", en: "Recovered flags" },
   "results.report": { zh: "复盘报告", en: "Writeup" },
   "results.empty": { zh: "还没有复盘报告", en: "No writeup yet" },

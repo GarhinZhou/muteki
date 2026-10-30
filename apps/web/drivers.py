@@ -1257,6 +1257,9 @@ def _standby_worker_env(
         agent_state_container_path=agent_state_container_path,
         model=str((profile or {}).get("model") or ""),
     ).env
+    if agent_state_dir is not None:
+        # Host-side path for conversation capture; not a provider setting.
+        env["MUTEKI_AGENT_STATE_DIR"] = str(agent_state_dir)
     if profile:
         apply_worker_identity_env(env, profile)
         env["MUTEKI_WORKER_REASONING_EFFORT"] = str(

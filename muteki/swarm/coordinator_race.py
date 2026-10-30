@@ -1596,6 +1596,10 @@ class _RaceHealthMixin:
             agent_state_container_path=agent_state_container_path,
             model=str((profile or {}).get("model") or ""),
         ).env
+        if agent_state_dir is not None:
+            # Host-side path used by conversation capture; the CLI itself does not
+            # need it, and it contains no credential material.
+            env["MUTEKI_AGENT_STATE_DIR"] = str(agent_state_dir)
         if agent_state_dir is not None and container is not None:
             from muteki.solver.container_exec import _chown_tree_to_worker
             _chown_tree_to_worker(str(agent_state_dir))

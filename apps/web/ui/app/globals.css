@@ -2973,6 +2973,13 @@ code, pre, kbd, .rid, .artifact-code, .runtime-context, .runtime-trace-labels,
 .results-actions button:disabled { opacity: .5; cursor: not-allowed; }
 .results-actions .results-generate { border-color: color-mix(in srgb, var(--accent) 45%, var(--line2));
   background: color-mix(in srgb, var(--accent) 12%, var(--panel)); color: var(--bright); }
+.results-actions .results-export { border-color: color-mix(in srgb, var(--blue) 40%, var(--line2));
+  color: var(--blue); background: color-mix(in srgb, var(--blue) 7%, var(--panel)); }
+.results-actions .results-export:hover:not(:disabled) { border-color: var(--blue); color: var(--bright); }
+.results-export-error { width: 100%; max-width: 1040px; margin: 0 auto; padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--red) 35%, var(--line)); border-radius: 8px;
+  color: var(--red); background: color-mix(in srgb, var(--red) 7%, var(--panel));
+  font-size: 11.5px; line-height: 1.45; }
 .results-actions .results-copy.copytext { border: 1px solid var(--line2); background: var(--panel);
   color: var(--muted); font-size: 11.5px; font-weight: 650; padding: 4px 10px; }
 .results-body { width: 100%; max-width: 1040px; margin: 0 auto; display: flex;

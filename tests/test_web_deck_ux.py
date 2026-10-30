@@ -751,6 +751,22 @@ def test_run_started_folds_operator_title_and_target_into_deck():
     _run_ui_node(script)
 
 
+def test_results_panel_exports_complete_conversation_archive():
+    results = (UI_ROOT / "components" / "ResultsPanel.tsx").read_text()
+    use_run = (UI_ROOT / "lib" / "useRun.ts").read_text()
+    server = (Path(__file__).resolve().parents[1] / "apps" / "web" / "server.py").read_text()
+    i18n = (UI_ROOT / "lib" / "i18n.tsx").read_text()
+
+    assert "getRunConversationArchive" in results
+    assert "getRunConversationArchive" in use_run
+    assert "/conversation-export" in use_run
+    assert "/conversation-export" in server
+    assert "build_conversation_archive" in server
+    assert 't("results.exportConversation")' in results
+    assert '"results.exportConversation"' in i18n
+    assert '"results.exportConversationTitle"' in i18n
+
+
 def test_advanced_flag_format_layout_is_not_cramped():
     convo = (UI_ROOT / "components" / "Conversation.tsx").read_text()
     css = (UI_ROOT / "app" / "globals.css").read_text()

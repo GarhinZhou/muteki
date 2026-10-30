@@ -17,6 +17,7 @@ export type IconName =
   | "terminal" | "cpu" | "dot" | "help" | "alert" | "clock" | "plug"
   | "target" | "play" | "network" | "list" | "board" | "layers"
   | "chevronDown" | "chevronUp" | "chevronRight" | "rows" | "upload" | "copy" | "search" | "refresh"
+  | "download"
   | "sun" | "moon" | "eye" | "eyeOff" | "droplet";
 
 // Each entry is the inner markup of a 24×24 icon. Stroke paths use
@@ -61,6 +62,7 @@ const PATHS: Record<IconName, JSX.Element> = {
   chevronRight: <path d="M9 6l6 6-6 6" />,
   rows: <path d="M4 6h16M4 10h16M4 14h16M4 18h16" />,
   upload: (<><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" /><path d="M12 16V4M7 9l5-5 5 5" /></>),
+  download: (<><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M4 21h16" /></>),
   copy: (<><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>),
   search: (<><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></>),
   refresh: (<><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 4v5h-5" /></>),

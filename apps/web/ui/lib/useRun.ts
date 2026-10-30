@@ -464,6 +464,22 @@ export async function getRunExp(runId: string): Promise<RunExpFile[]> {
   }
 }
 
+/** Download the full per-run conversation archive (events + all native logs). */
+export async function getRunConversationArchive(runId: string): Promise<Blob> {
+  const r = await apiFetch(`/api/runs/${runId}/conversation-export`);
+  if (!r.ok) {
+    let detail = "";
+    try {
+      const body = await r.json();
+      detail = body?.detail ? String(body.detail) : "";
+    } catch {
+      detail = await r.text().catch(() => "");
+    }
+    throw new Error(detail || `conversation export failed (${r.status})`);
+  }
+  return r.blob();
+}
+
 // ── engine status ────────────────────────────────────────────────────────────
 
 /** Per-dispatched-worker availability + health. */

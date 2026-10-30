@@ -7,16 +7,19 @@ import { Icon } from "@/components/Icon";
 import { Markdown } from "@/components/Markdown";
 import type { DeckState } from "@/lib/events";
 import { useT } from "@/lib/i18n";
-import { getRunExp, type RunExpFile } from "@/lib/useRun";
+import {
+  getRunConversationArchive,
+  getRunExp,
+  type RunExpFile,
+} from "@/lib/useRun";
 
 function safeFilename(value: string, fallback: string): string {
   const cleaned = (value || "").replace(/[\\/:*?"<>|\s]+/g, "_").trim();
   return cleaned || fallback;
 }
 
-function downloadText(filename: string, text: string): void {
+function downloadBlob(filename: string, blob: Blob): void {
   try {
-    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -24,10 +27,16 @@ function downloadText(filename: string, text: string): void {
     document.body.appendChild(link);
     link.click();
     link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    // Large conversation archives can take a while to stream to disk; keep the
+    // object URL alive long enough for the browser to finish reading it.
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
   } catch {
     // A download failure should never break the results view.
   }
+}
+
+function downloadText(filename: string, text: string): void {
+  downloadBlob(filename, new Blob([text], { type: "text/plain;charset=utf-8" }));
 }
 
 function sizeLabel(size: number): string {
@@ -80,6 +89,28 @@ export function ResultsPanel({
 
   useEffect(() => loadExp(), [loadExp]);
 
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
+
+  const exportConversation = useCallback(async () => {
+    if (exporting || !deck.runId) return;
+    setExporting(true);
+    setExportError("");
+    try {
+      const blob = await getRunConversationArchive(deck.runId);
+      downloadBlob(
+        `${safeFilename(deck.runId, "run")}-conversation.zip`,
+        blob,
+      );
+    } catch (err) {
+      setExportError(
+        String((err as Error)?.message || err).slice(0, 300),
+      );
+    } finally {
+      setExporting(false);
+    }
+  }, [deck.runId, exporting]);
+
   const flags = deck.flags.length
     ? deck.flags
     : deck.flag
@@ -118,6 +149,19 @@ export function ResultsPanel({
         <div className="results-actions">
           <button
             type="button"
+            className="results-export"
+            onClick={() => { void exportConversation(); }}
+            disabled={exporting}
+            title={t("results.exportConversationTitle")}
+            aria-label={t("results.exportConversationTitle")}
+          >
+            <Icon name={exporting ? "clock" : "download"} size={13} />
+            {exporting
+              ? t("results.exportingConversation")
+              : t("results.exportConversation")}
+          </button>
+          <button
+            type="button"
             className="results-back"
             onClick={onShowConversation}
           >
@@ -126,6 +170,11 @@ export function ResultsPanel({
           </button>
         </div>
       </header>
+      {exportError ? (
+        <div className="results-export-error" role="alert">
+          {t("results.exportConversationFailed", { detail: exportError })}
+        </div>
+      ) : null}
 
       <div className="results-body">
         {flags.length > 0 ? (
