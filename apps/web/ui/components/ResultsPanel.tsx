@@ -99,7 +99,10 @@ export function ResultsPanel({
     try {
       const blob = await getRunConversationArchive(deck.runId);
       downloadBlob(
-        `${safeFilename(deck.runId, "run")}-conversation.zip`,
+        `${safeFilename(
+          deck.challengeName || deck.runId,
+          "run",
+        )}-conversation.zip`,
         blob,
       );
     } catch (err) {
@@ -109,7 +112,7 @@ export function ResultsPanel({
     } finally {
       setExporting(false);
     }
-  }, [deck.runId, exporting]);
+  }, [deck.challengeName, deck.runId, exporting]);
 
   const flags = deck.flags.length
     ? deck.flags

@@ -132,6 +132,8 @@ async def test_conversation_export_returns_zip(server) -> None:
         r = await client.get(f"/api/runs/{run_id}/conversation-export")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("application/zip")
+    assert "baby-encode-conversation.zip" in r.headers.get(
+        "content-disposition", "")
     with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
         names = set(zf.namelist())
         assert "muteki/events.jsonl" in names
@@ -141,6 +143,26 @@ async def test_conversation_export_returns_zip(server) -> None:
         assert manifest["run_id"] == run_id
         assert manifest["challenge"]["name"]
         assert manifest["workers"]
+
+
+async def test_conversation_export_filename_uses_custom_title(tmp_path) -> None:
+    mgr = RunManager(sessions_root=tmp_path / "sessions")
+    run = mgr.create("conv-title")
+    run.name = "challenge-name"
+    run.custom_name = "Paper Shell / v2"
+    app = create_app(mgr)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        timeout=30,
+        trust_env=False,
+    ) as client:
+        resp = await client.get("/api/runs/conv-title/conversation-export")
+
+    assert resp.status_code == 200
+    assert "Paper_Shell_v2-conversation.zip" in resp.headers.get(
+        "content-disposition", "")
 
 
 async def test_mock_run_finished_carries_terminal_reason(server) -> None:

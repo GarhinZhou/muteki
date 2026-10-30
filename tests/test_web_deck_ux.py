@@ -762,6 +762,8 @@ def test_results_panel_exports_complete_conversation_archive():
     assert "/conversation-export" in use_run
     assert "/conversation-export" in server
     assert "build_conversation_archive" in server
+    # Download name must carry the operator title/challenge name, not just run id.
+    assert "deck.challengeName" in results
     assert 't("results.exportConversation")' in results
     assert '"results.exportConversation"' in i18n
     assert '"results.exportConversationTitle"' in i18n

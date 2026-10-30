@@ -536,7 +536,12 @@ def create_app(manager: Optional[RunManager] = None) -> FastAPI:
             expected_flags=run.expected_flags,
             winner=mgr.load_winner_continuation(run_id),
         )
-        filename = f"{str(run_id).replace('/', '_')}-conversation.zip"
+        # Prefer the operator's title / challenge name over the opaque run id so
+        # downloaded archives are recognisable in a match-upload folder.
+        title = str(run.custom_name or run.name or "").strip()
+        stem = re.sub(r'[\\/:*?"<>|\x00-\x1f\s]+', "_", title).strip(" ._")
+        fallback = str(run_id).replace("/", "_") or "run"
+        filename = f"{stem or fallback}-conversation.zip"
         return FileResponse(
             archive,
             media_type="application/zip",
