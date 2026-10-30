@@ -5496,6 +5496,18 @@ button.ws2-overview-tr:hover { background: var(--ink-wash); }
 .selection-glide-host .thread-item.menu-open {
   z-index: 90;
 }
+/* The archived toggle is a later sibling of the run list in the rail scroller.
+   The glide layer above raises every direct child to z-index:1, so that later
+   button would paint over an open row menu even though the menu's row is z-index
+   90 (the row is trapped inside its .thread stacking context). Keep the toggle
+   beneath list content, and raise the section/folder that owns an open menu. */
+.rail-scroll.selection-glide-host > .rail-archtoggle {
+  z-index: 0;
+}
+.selection-glide-host > .thread:has(.thread-item.menu-open),
+.selection-glide-host > .rail-folder:has(.thread-item.menu-open) {
+  z-index: 92;
+}
 
 /* The shared layer owns selected backgrounds; items continue to own content,
    focus rings and semantic colours. */

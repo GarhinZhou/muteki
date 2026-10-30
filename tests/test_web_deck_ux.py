@@ -769,6 +769,17 @@ def test_results_panel_exports_complete_conversation_archive():
     assert '"results.exportConversationTitle"' in i18n
 
 
+def test_archived_toggle_stacks_below_open_row_menu():
+    css = (UI_ROOT / "app" / "globals.css").read_text()
+
+    selector = ".rail-scroll.selection-glide-host > .rail-archtoggle"
+    start = css.index(selector)
+    rule = css[start:css.index("}", start)]
+    assert "z-index: 0" in rule
+    assert ".selection-glide-host > .thread:has(.thread-item.menu-open)" in css
+    assert ".selection-glide-host > .rail-folder:has(.thread-item.menu-open)" in css
+
+
 def test_advanced_flag_format_layout_is_not_cramped():
     convo = (UI_ROOT / "components" / "Conversation.tsx").read_text()
     css = (UI_ROOT / "app" / "globals.css").read_text()
